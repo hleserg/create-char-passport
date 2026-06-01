@@ -141,6 +141,30 @@ def test_passport_refs_skips_unapproved_or_missing(bucket: Path) -> None:
     assert [r.role for r in passport.passport_refs(state, "passport_3q")] == ["face"]
 
 
+def test_passport_refs_style_image_rides_every_frame_first(bucket: Path) -> None:
+    state = blank_state("Heron")
+    save_state(state)
+    (character_dir(state.character_id) / "refs/style.png").write_bytes(b"style")
+    state.style_ref = "refs/style.png"
+    _approved(state, "passport_face")
+    _approved(state, "passport_body")
+    # Style is the ONLY ref on frame 1, and always first thereafter.
+    assert [r.role for r in passport.passport_refs(state, "passport_face")] == ["style"]
+    assert [r.role for r in passport.passport_refs(state, "passport_body")] == ["style", "face"]
+    assert [r.role for r in passport.passport_refs(state, "passport_3q")] == [
+        "style",
+        "face",
+        "body",
+    ]
+
+
+def test_passport_refs_skips_missing_style_file(bucket: Path) -> None:
+    state = blank_state("Heron")
+    save_state(state)
+    state.style_ref = "refs/style.png"  # recorded but the file is absent
+    assert passport.passport_refs(state, "passport_face") == []
+
+
 # --------------------------------------------------------------------------- #
 # Layer edits
 # --------------------------------------------------------------------------- #

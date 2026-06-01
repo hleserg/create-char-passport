@@ -193,18 +193,22 @@ def previous_passport_step(step_key: str) -> str | None:
 def passport_refs(state: CharacterState, step_key: str) -> list[Ref]:
     """Role references to attach when generating ``step_key`` (§3.5 / §4).
 
-    Schedule: frame 1 attaches none (no approved refs yet — STYLE rides the
-    frozen text layer); frame 2 attaches the face reference; frames 3-5 attach
-    face + body. A reference is included only when its source frame is approved
-    and the file is present on disk (defensive against a mid-regeneration ref).
+    Schedule (style always first): the STYLE reference *image* rides every frame
+    — it is the only reference on frame 1 (§4 step 1); frame 2 adds the face
+    reference; frames 3-5 add face + body. A reference is included only when its
+    source exists on disk (defensive against a missing / mid-regeneration ref).
     """
     idx = passport_index(step_key)
+    refs: list[Ref] = []
+    if state.style_ref:
+        style_path = character_asset(state.character_id, state.style_ref)
+        if style_path.is_file():
+            refs.append(Ref(path=str(style_path), role="style"))
     wanted: list[tuple[str, RefRole]] = []
     if idx >= 1:
         wanted.append(("passport_face", "face"))
     if idx >= 2:
         wanted.append(("passport_body", "body"))
-    refs: list[Ref] = []
     for src_key, role in wanted:
         record = state.steps.get(src_key)
         if record is None or not record.approved_path:

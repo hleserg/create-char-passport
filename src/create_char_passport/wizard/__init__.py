@@ -48,6 +48,7 @@ from create_char_passport.wizard.style import (
     STYLE_PROMPT,
     apply_style,
     draft_style_prompt,
+    set_style_ref,
 )
 
 __all__ = [
@@ -75,6 +76,7 @@ __all__ = [
     "set_emotions_enabled",
     "set_outfits_enabled",
     "set_props_enabled",
+    "set_style_ref",
     "sync_outfits",
     "sync_props",
     "table_from_state",

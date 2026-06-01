@@ -23,7 +23,7 @@ from create_char_passport.screens.router import (
     resume_screen,
 )
 from create_char_passport.state import CharacterState, CostLedger
-from create_char_passport.storage import save_state
+from create_char_passport.storage import character_asset, save_state
 from create_char_passport.wizard.extraction import ExtractedCharacter, extract_characters
 from create_char_passport.wizard.forms import apply_table as _apply_table
 from create_char_passport.wizard.forms import (
@@ -45,7 +45,7 @@ from create_char_passport.wizard.passport import (
     next_passport_step,
     previous_passport_step,
 )
-from create_char_passport.wizard.style import apply_style, draft_style_prompt
+from create_char_passport.wizard.style import apply_style, draft_style_prompt, set_style_ref
 
 
 def _persist(session: WizardSession) -> None:
@@ -102,6 +102,10 @@ def on_pick_extracted(session: WizardSession, name: str) -> WizardSession:
     if extracted is None:
         return session
     session.character = character_from_extracted(extracted, style_prompt=session.style_prompt)
+    # A second character picked after style was approved still gets the style
+    # reference image copied into its own bucket (the text layer rides via prompt).
+    if session.style_image_path:
+        set_style_ref(session.character, session.style_image_path)
     if session.style_approved:
         session.current_screen = ScreenId.CHAR_DATA
         _persist(session)
@@ -161,12 +165,24 @@ def on_draft_style(
     return session, draft
 
 
-def on_approve_style(session: WizardSession, style_text: str) -> WizardSession:
-    """Freeze STYLE for the session and stamp it onto the current character."""
+def on_approve_style(
+    session: WizardSession, style_text: str, image_paths: list[str] | None = None
+) -> WizardSession:
+    """Freeze STYLE (text + reference image) for the session and stamp it on the character.
+
+    The first uploaded style photo becomes the project STYLE reference *image*
+    (``refs/style.png``), attached with role ``style`` to every later generation
+    (§3.5 / §4 step 1). Its stable path is kept on the session so characters picked
+    later in the same session inherit it too.
+    """
     session.style_prompt = (style_text or "").strip()
     session.style_approved = True
     if session.character is not None:
         apply_style(session.character, session.style_prompt)
+        first_image = next((p for p in (image_paths or []) if p), None)
+        stored = set_style_ref(session.character, first_image) if first_image else None
+        if stored:
+            session.style_image_path = str(character_asset(session.character.character_id, stored))
         session.current_screen = ScreenId.CHAR_DATA
         _persist(session)
     else:

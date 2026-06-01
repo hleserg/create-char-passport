@@ -89,11 +89,35 @@ def _get_client() -> Any:
     return genai.Client(api_key=get_settings().gemini_api_key)
 
 
+# Per-role guidance spelled out in the text part so the generator knows exactly
+# what to take from each attached image (and what to ignore) — §3.5.
+_ROLE_GUIDANCE: dict[str, str] = {
+    "style": (
+        "the ART-STYLE reference — copy ONLY its artistic manner (medium, line work, "
+        "shading, colour palette, rendering); take NOTHING of its content, characters, "
+        "pose, objects or background"
+    ),
+    "face": "the FACE reference — copy this character's facial identity only",
+    "body": (
+        "the BODY reference — copy this character's build and proportions only, NOT the clothing"
+    ),
+    "outfit": "the OUTFIT reference — copy the clothing only",
+}
+
+
 def _role_caption(refs: list[Ref]) -> str:
-    """Human-readable mapping of ``image N → role`` for the text part."""
+    """Human-readable mapping of ``image N → role`` for the text part.
+
+    Each line states what to take from that image and what to ignore, so the
+    generator never lifts content from the style image or clothing from the body
+    reference (§3.5). Unknown roles fall back to ``"<role> reference"``.
+    """
     if not refs:
         return ""
-    rows = [f"image {i + 1} = {r.role} reference" for i, r in enumerate(refs)]
+    rows = [
+        f"image {i + 1} = {_ROLE_GUIDANCE.get(r.role, f'{r.role} reference')}"
+        for i, r in enumerate(refs)
+    ]
     return "Reference images (do not invent new ones):\n" + "\n".join(rows)
 
 

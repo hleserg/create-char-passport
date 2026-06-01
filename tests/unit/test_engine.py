@@ -326,5 +326,5 @@ def test_text_part_includes_role_caption_and_conflict_rule(
     # Last part is the text composed by _build_text_part.
     text = contents[-1]["text"]
     assert "[STYLE]" in text
-    assert "image 1 = face reference" in text
+    assert "image 1 = the FACE reference" in text
     assert "IGNORE the clothing" in text

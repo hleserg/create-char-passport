@@ -60,11 +60,11 @@ def _wire_style(style: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     c["draft_btn"].click(
         handlers.on_draft_style, [session, c["images"]], [session, c["style_text"]]
     ).then(cost_banner_text, [session], [ctx.cost_banner])
-    c["approve_btn"].click(handlers.on_approve_style, [session, c["style_text"]], [session]).then(
-        char_data_refresh, [session], ctx.char_data_outputs
-    ).then(screen_visibility, [session], ctx.containers).then(
-        cost_banner_text, [session], [ctx.cost_banner]
-    )
+    c["approve_btn"].click(
+        handlers.on_approve_style, [session, c["style_text"], c["images"]], [session]
+    ).then(char_data_refresh, [session], ctx.char_data_outputs).then(
+        screen_visibility, [session], ctx.containers
+    ).then(cost_banner_text, [session], [ctx.cost_banner])
 
 
 def _wire_char_data(char_data: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
