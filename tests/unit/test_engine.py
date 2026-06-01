@@ -195,6 +195,20 @@ def test_call_llm_returns_text(monkeypatch: pytest.MonkeyPatch) -> None:
     assert call_llm("describe the style", image_b64="aGVsbG8=") == "hello world"
 
 
+def test_call_llm_sends_multiple_images_ahead_of_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    response = FakeResponse(
+        candidates=[FakeCandidate(content=FakeContent(parts=[FakePart(text="style")]))],
+    )
+    client = _patch_client(monkeypatch, response)
+    call_llm("describe the style", image_b64="single", images_b64=["a", "b"])
+
+    contents = client.models.calls[0]["contents"]
+    inline = [p["inline_data"]["data"] for p in contents if "inline_data" in p]
+    # Single image first, then the list, all ahead of the trailing text part.
+    assert inline == ["single", "a", "b"]
+    assert contents[-1]["text"] == "describe the style"
+
+
 def test_call_llm_uses_response_text_when_present(monkeypatch: pytest.MonkeyPatch) -> None:
     response = FakeResponse(candidates=[], text="direct-text")
     _patch_client(monkeypatch, response)

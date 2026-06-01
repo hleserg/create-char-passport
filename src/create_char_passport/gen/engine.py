@@ -213,9 +213,15 @@ def call_llm(
     prompt: str,
     image_b64: str | None = None,
     *,
+    images_b64: list[str] | None = None,
     model: str | None = None,
 ) -> str:
     """LLM text call — used by extract-characters, style prompt, AI-check, AI-edit.
+
+    ``image_b64`` attaches a single inline image; ``images_b64`` attaches a
+    whole list (the style step sends ~5 reference photos in one multimodal
+    call). Both may be combined — every image is sent ahead of the text part,
+    in order: ``image_b64`` first, then ``images_b64``.
 
     Returns the raw LLM text on success, or an empty string on any API
     failure (the caller decides how to surface the retry). Errors are
@@ -223,8 +229,11 @@ def call_llm(
     input (AGENTS.md hard rule).
     """
     parts: list[dict[str, Any]] = [{"text": prompt}]
+    inline = list(images_b64 or [])
     if image_b64:
-        parts.insert(0, {"inline_data": {"mime_type": "image/png", "data": image_b64}})
+        inline.insert(0, image_b64)
+    for data in reversed(inline):
+        parts.insert(0, {"inline_data": {"mime_type": "image/png", "data": data}})
 
     try:
         client = _get_client()

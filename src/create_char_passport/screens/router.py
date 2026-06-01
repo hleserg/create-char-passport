@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 from create_char_passport.state import CharacterState, ordered_step_keys
 
@@ -68,8 +69,13 @@ class WizardSession:
     current_screen: ScreenId = ScreenId.HOME
     character: CharacterState | None = None
     style_approved: bool = False
+    style_prompt: str = ""
     notice: str = ""
     available_character_ids: list[str] = field(default_factory=list)
+    # Characters extracted from the pasted text, awaiting the user's pick.
+    # Typed ``Any`` to avoid a router -> wizard import cycle; holds
+    # ``wizard.ExtractedCharacter`` instances.
+    extracted_characters: list[Any] = field(default_factory=list)
 
 
 def _flag_for_optional(screen: ScreenId, session: WizardSession) -> bool:

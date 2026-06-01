@@ -5,6 +5,14 @@ This package defines the typed schema, step-key vocabulary (contract K1),
 and pure helpers used by storage and the router.
 """
 
+from create_char_passport.state.character_table import (
+    CHARACTER_TABLE_FIELDS,
+    CHARACTER_TABLE_KEYS,
+    TableField,
+    blank_character_table,
+    coerce_value,
+    normalize_character_table,
+)
 from create_char_passport.state.schema import (
     BaseEmotion,
     BaseOutfit,
@@ -46,6 +54,8 @@ from create_char_passport.state.steps import (
 __all__ = [
     "ALL_STATIC_STEPS",
     "BASE_EMOTION_STEP",
+    "CHARACTER_TABLE_FIELDS",
+    "CHARACTER_TABLE_KEYS",
     "DATASET_PREFIX",
     "EMOTION_PREFIX",
     "OUTFIT_PREFIX",
@@ -64,12 +74,16 @@ __all__ = [
     "PropShot",
     "StepKind",
     "StepRecord",
+    "TableField",
+    "blank_character_table",
     "blank_state",
     "character_id_from_name",
     "classify_step",
+    "coerce_value",
     "dataset_step",
     "emotion_step",
     "is_passport_step",
+    "normalize_character_table",
     "ordered_step_keys",
     "outfit_detail_step",
     "outfit_step",
