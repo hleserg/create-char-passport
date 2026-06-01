@@ -36,3 +36,6 @@ htmlcov/
 
 # Generated
 /site/
+
+# Claude Code personal hooks/overrides (not shared)
+.claude/settings.local.json
