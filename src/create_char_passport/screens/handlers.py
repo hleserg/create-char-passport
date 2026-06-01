@@ -14,6 +14,7 @@ unit-tested by direct calls; the only thing left to the (test-covered)
 
 from __future__ import annotations
 
+from create_char_passport.gen import clear_scene_override, set_scene_override
 from create_char_passport.screens.router import (
     ScreenId,
     WizardSession,
@@ -188,6 +189,27 @@ def on_update_props(session: WizardSession, rows: object) -> WizardSession:
     """Rebuild the prop rows from the edited dataframe."""
     if session.character is not None:
         sync_props(session.character, _rows(rows))
+        _persist(session)
+    return session
+
+
+# --------------------------------------------------------------------------- #
+# Scene editing (COMPOSITION override) — consumed by the generation screens
+# once they exist (HLE-728/730). The override persists per character: the new
+# prompt replaces the scene's hardcode for every future generation of it.
+# --------------------------------------------------------------------------- #
+def on_set_scene_override(session: WizardSession, scene_id: str, text: str) -> WizardSession:
+    """Store a custom COMPOSITION prompt for one scene and persist it."""
+    if session.character is not None:
+        set_scene_override(session.character, scene_id, text or "")
+        _persist(session)
+    return session
+
+
+def on_clear_scene_override(session: WizardSession, scene_id: str) -> WizardSession:
+    """Revert a scene to its registry default and persist."""
+    if session.character is not None:
+        clear_scene_override(session.character, scene_id)
         _persist(session)
     return session
 

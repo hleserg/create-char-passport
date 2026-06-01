@@ -161,6 +161,10 @@ class CharacterState:
     steps: dict[str, StepRecord] = field(default_factory=dict)
     current_step: str | None = None
     dataset_compositions: list[str] = field(default_factory=list)
+    # Per-character COMPOSITION overrides: ``scene_id -> custom prompt``. An
+    # entry replaces the hardcoded scene preset for every future generation of
+    # that scene (see ``create_char_passport.gen.scenes``). Empty by default.
+    scene_overrides: dict[str, str] = field(default_factory=dict)
 
 
 def blank_state(name: str, character_id: str | None = None) -> CharacterState:
@@ -268,4 +272,8 @@ def state_from_dict(data: dict[str, Any]) -> CharacterState:
         steps={k: _step_record(v) for k, v in (data.get("steps") or {}).items()},
         current_step=data.get("current_step"),
         dataset_compositions=list(data.get("dataset_compositions") or []),
+        # ``str()`` coercion is deliberate defensive parsing of an external,
+        # possibly hand-edited file — keys/values are forced to the declared
+        # ``dict[str, str]`` shape rather than trusting the JSON types.
+        scene_overrides={str(k): str(v) for k, v in (data.get("scene_overrides") or {}).items()},
     )
