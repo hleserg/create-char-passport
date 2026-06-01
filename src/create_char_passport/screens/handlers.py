@@ -35,6 +35,16 @@ from create_char_passport.wizard.forms import (
     sync_outfits,
     sync_props,
 )
+from create_char_passport.wizard.passport import (
+    all_passport_approved,
+    apply_layer_edit,
+    approve_passport_frame,
+    current_passport_step,
+    first_pending_passport,
+    generate_passport_frame,
+    next_passport_step,
+    previous_passport_step,
+)
 from create_char_passport.wizard.style import apply_style, draft_style_prompt
 
 
@@ -254,6 +264,129 @@ def on_next(session: WizardSession) -> WizardSession:
 def on_back(session: WizardSession) -> WizardSession:
     """Step back to the previous enabled screen."""
     session.current_screen = previous_screen(session)
+    return session
+
+
+# --------------------------------------------------------------------------- #
+# Passport phase (5 frames on one screen; cursor = ``character.current_step``)
+# --------------------------------------------------------------------------- #
+def on_enter_passport(session: WizardSession) -> WizardSession:
+    """Place the passport cursor on entry, honouring the ``need_regen`` gate.
+
+    No-op unless we are actually on the passport screen with a character, so it
+    is safe to chain after any navigation into the phase (Next / resume / Back).
+    """
+    state = session.character
+    if state is not None and session.current_screen is ScreenId.PASSPORT:
+        state.current_step = current_passport_step(state)
+        session.notice = ""
+        _persist(session)
+    return session
+
+
+def on_passport_edit(session: WizardSession, face: str, body: str, outfit: str) -> WizardSession:
+    """Persist edited layer text for the current frame (editable layers only)."""
+    state = session.character
+    if state is not None:
+        apply_layer_edit(state, current_passport_step(state), face=face, body=body, outfit=outfit)
+        _persist(session)
+    return session
+
+
+def on_passport_generate(
+    session: WizardSession, face: str, body: str, outfit: str
+) -> WizardSession:
+    """Generate (or regenerate) the current frame; bill the paid call; keep the prompt.
+
+    Regenerate is inferred from the frame already having a generation, so the
+    single button covers «Сгенерировать»/«Перегенерить». A failed call leaves
+    the previous frame and the edited prompt intact (the engine never raises).
+    """
+    state = session.character
+    if state is None:
+        return session
+    step_key = current_passport_step(state)
+    apply_layer_edit(state, step_key, face=face, body=body, outfit=outfit)
+    record = state.steps.get(step_key)
+    regenerate = record is not None and record.last_path is not None
+    meter = CostLedger()
+    result = generate_passport_frame(state, step_key, regenerate=regenerate, meter=meter)
+    session.notice = (
+        "Готово — проверь кадр и нажми «Утвердить»."
+        if result.ok
+        else (result.error or "Не удалось сгенерировать. Нажми ещё раз — промт сохранён.")
+    )
+    # Bills the (successful) call to session + character and persists; a failed
+    # call's meter is empty, so this is just the persist of the cleared flags.
+    _attribute_cost(session, meter)
+    return session
+
+
+def on_passport_approve(session: WizardSession) -> WizardSession:
+    """Approve the current frame (freeze rules apply) and advance the cursor."""
+    state = session.character
+    if state is None:
+        return session
+    step_key = current_passport_step(state)
+    try:
+        approve_passport_frame(state, step_key)
+    except ValueError:
+        session.notice = "Сначала сгенерируйте кадр, потом утверждайте."
+        _persist(session)
+        return session
+    nxt = next_passport_step(step_key)
+    if nxt is not None:
+        state.current_step = nxt
+        session.notice = "Кадр утверждён → следующий кадр."
+    elif all_passport_approved(state):
+        session.notice = "Все 5 паспортных кадров утверждены — нажми «Вперёд →»."
+    else:
+        session.notice = "Кадр утверждён."
+    _persist(session)
+    return session
+
+
+def on_passport_back(session: WizardSession) -> WizardSession:
+    """Step to the previous frame, or leave the phase backwards from frame 1."""
+    state = session.character
+    if state is None:
+        return session
+    prev = previous_passport_step(current_passport_step(state))
+    if prev is not None:
+        state.current_step = prev
+        session.notice = ""
+    else:
+        session.current_screen = previous_screen(session)
+    _persist(session)
+    return session
+
+
+def on_passport_forward(session: WizardSession) -> WizardSession:
+    """Advance to the next frame, or leave the phase once all 5 are approved.
+
+    The phase-exit gate is enforced here (not the generic router ``can_advance``,
+    which checks the *next phase's* first step): all five frames approved and no
+    pending ``need_regen`` before moving to the next screen.
+    """
+    state = session.character
+    if state is None:
+        return session
+    step_key = current_passport_step(state)
+    record = state.steps.get(step_key)
+    if record is None or not record.approved_path:
+        session.notice = "Утвердите текущий кадр, чтобы идти дальше."
+        return session
+    nxt = next_passport_step(step_key)
+    if nxt is not None:
+        state.current_step = nxt
+        session.notice = ""
+        _persist(session)
+        return session
+    if all_passport_approved(state) and first_pending_passport(state) is None:
+        session.current_screen = next_screen(session)
+        _persist(session)
+    else:
+        session.notice = "Сначала утвердите все 5 кадров."
     return session
 
 

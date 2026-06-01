@@ -20,6 +20,7 @@ from typing import Any
 import gradio as gr
 
 from create_char_passport.ai import AIEditSlot, AISlot, build_ai_check_slot, build_ai_edit_slot
+from create_char_passport.gen import build_prompt_layers, build_step_overrides
 from create_char_passport.screens.handlers import on_update_table
 from create_char_passport.screens.router import (
     SCREEN_ORDER,
@@ -27,6 +28,7 @@ from create_char_passport.screens.router import (
     WizardSession,
 )
 from create_char_passport.state import CHARACTER_TABLE_FIELDS, CHARACTER_TABLE_KEYS, CostLedger
+from create_char_passport.storage import character_asset
 from create_char_passport.wizard import (
     BASE_OUTFIT_PLACEHOLDER,
     base_outfit_display,
@@ -35,6 +37,16 @@ from create_char_passport.wizard import (
     preset_labels,
     prop_rows,
     table_from_state,
+)
+from create_char_passport.wizard.passport import (
+    COMMON_CRITERIA,
+    FACE_BODY_HINT,
+    NOTICE,
+    cascade_warning,
+    current_passport_step,
+    editable_layers,
+    frame_criterion,
+    frame_title,
 )
 
 
@@ -228,12 +240,78 @@ def _render_step(
     )
 
 
+# Components refreshed when the passport frame (re)renders, in fixed order.
+PASSPORT_REFRESH_KEYS: tuple[str, ...] = (
+    "heading",
+    "criterion",
+    "cascade",
+    "status",
+    "preview",
+    "style_box",
+    "face_box",
+    "body_box",
+    "outfit_box",
+    "expression_box",
+    "composition_box",
+    "gen_btn",
+    "approve_btn",
+    "forward_btn",
+)
+
+
 def render_passport() -> ScreenHandle:
-    return _render_step(
-        ScreenId.PASSPORT,
-        body="Passport phase — 5 canonical frames. AI-check + AI-edit reserved.",
-        representative_step_key="passport_face",
-        with_edit_slot=True,
+    """Unified passport step form — one screen, five frames (window 3, §5).
+
+    A single ``gr.Group``; :func:`passport_refresh` repaints it per frame. FACE
+    is the representative prompt for the (reserved) AI slots; the layer fields'
+    interactivity is toggled per frame by the refresh glue.
+    """
+    components: dict[str, Any] = {}
+    with gr.Group(visible=False) as group:
+        components["heading"] = gr.Markdown("### Паспорт")
+        gr.Markdown(f"**{NOTICE}**")
+        components["criterion"] = gr.Markdown("")
+        components["cascade"] = gr.Markdown("", visible=False)
+        components["preview"] = gr.Image(label="Превью кадра", interactive=False, type="filepath")
+        components["status"] = gr.Markdown("")
+
+        gr.Markdown(f"_{FACE_BODY_HINT}_")
+        components["style_box"] = gr.Textbox(label="STYLE (заморожен)", interactive=False, lines=2)
+        components["face_box"] = gr.Textbox(
+            label="FACE — лицо / идентичность", lines=3, interactive=True, elem_id="passport-prompt"
+        )
+        components["body_box"] = gr.Textbox(
+            label="BODY — телосложение / приметы", lines=3, interactive=True
+        )
+        components["outfit_box"] = gr.Textbox(
+            label="OUTFIT — базовый наряд", lines=2, interactive=True
+        )
+        components["expression_box"] = gr.Textbox(label="EXPRESSION", interactive=False)
+        components["composition_box"] = gr.Textbox(
+            label="COMPOSITION (сцена кадра)", interactive=False, lines=4
+        )
+
+        prompt = components["face_box"]
+        ai_check = build_ai_check_slot("passport_face", prompt)
+        ai_edit = build_ai_edit_slot("passport_face", prompt)
+
+        with gr.Row():
+            components["gen_btn"] = gr.Button(
+                "Сгенерировать", variant="primary", elem_id="passport-generate"
+            )
+            components["approve_btn"] = gr.Button(
+                "Утвердить", variant="primary", elem_id="passport-approve"
+            )
+        with gr.Row():
+            components["back_btn"] = gr.Button("← Назад", elem_id="passport-back")
+            components["forward_btn"] = gr.Button("Вперёд →", elem_id="passport-forward")
+    return ScreenHandle(
+        screen=ScreenId.PASSPORT,
+        container=group,
+        prompt=prompt,
+        ai_check=ai_check,
+        ai_edit=ai_edit,
+        components=components,
     )
 
 
@@ -358,6 +436,54 @@ def update_table_fields(session: WizardSession, *field_values: str) -> WizardSes
     """Collect the trait-table textbox values into a dict and persist them."""
     table = dict(zip(CHARACTER_TABLE_KEYS, field_values, strict=False))
     return on_update_table(session, table)
+
+
+def passport_refresh(session: WizardSession) -> list[Any]:
+    """Updates for every passport component, in :data:`PASSPORT_REFRESH_KEYS` order.
+
+    Repaints the single passport form for whichever frame the cursor is on:
+    heading + criteria, the cascade banner (visible only when the frame is
+    stale), the preview image, the six layer fields (with per-frame
+    interactivity and forced EXPRESSION/COMPOSITION), and the button states
+    (generate vs regenerate label; approve/forward enablement). No character ->
+    all no-op updates (the screen is not visible anyway).
+    """
+    state = session.character
+    if state is None:
+        return [gr.update() for _ in PASSPORT_REFRESH_KEYS]
+    step_key = current_passport_step(state)
+    layers = build_prompt_layers(state, step_key, overrides=build_step_overrides(state, step_key))
+    editable = editable_layers(step_key)
+    record = state.steps.get(step_key)
+    has_generation = record is not None and bool(record.last_path)
+    is_approved = record is not None and bool(record.approved_path)
+    warning = cascade_warning(state, step_key)
+
+    preview: str | None = None
+    if record is not None and record.last_path:
+        path = character_asset(state.character_id, record.last_path)
+        if path.is_file():
+            preview = str(path)
+
+    values: dict[str, Any] = {
+        "heading": gr.update(value=f"### {frame_title(step_key)}"),
+        "criterion": gr.update(
+            value=f"**Критерий кадра:** {frame_criterion(step_key)}\n\n_{COMMON_CRITERIA}_"
+        ),
+        "cascade": gr.update(value=warning or "", visible=warning is not None),
+        "status": gr.update(value=session.notice or ""),
+        "preview": gr.update(value=preview),
+        "style_box": gr.update(value=layers["style"]),
+        "face_box": gr.update(value=layers["face"], interactive="face" in editable),
+        "body_box": gr.update(value=layers["body"], interactive="body" in editable),
+        "outfit_box": gr.update(value=layers["outfit"], interactive="outfit" in editable),
+        "expression_box": gr.update(value=layers["expression"]),
+        "composition_box": gr.update(value=layers["composition"]),
+        "gen_btn": gr.update(value="Перегенерить" if has_generation else "Сгенерировать"),
+        "approve_btn": gr.update(interactive=has_generation),
+        "forward_btn": gr.update(interactive=is_approved),
+    }
+    return [values[key] for key in PASSPORT_REFRESH_KEYS]
 
 
 def interactive_update(enabled: bool) -> Any:

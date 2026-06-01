@@ -141,6 +141,12 @@ class StepRecord:
     approved_path: str | None = None
     prompt_layers: PromptLayers = field(default_factory=PromptLayers)
     need_regen: bool = False
+    # Soft cascade flag (passport §5): raised on a later, already-approved frame
+    # when an identity-reference frame (FACE/BODY) is regenerated, so the UI can
+    # warn "the base shifted — re-check this one". Distinct from ``need_regen``:
+    # advisory only (the user decides), never forces a jump-back. Cleared when
+    # this frame is itself regenerated or (re)approved.
+    stale: bool = False
 
 
 @dataclass(slots=True)
@@ -298,6 +304,7 @@ def _step_record(data: dict[str, Any]) -> StepRecord:
         approved_path=data.get("approved_path"),
         prompt_layers=_prompt_layers(data.get("prompt_layers")),
         need_regen=bool(data.get("need_regen", False)),
+        stale=bool(data.get("stale", False)),
     )
 
 

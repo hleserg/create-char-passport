@@ -47,6 +47,17 @@ def character_dir(character_id: str, *, root: Path | None = None) -> Path:
     return base
 
 
+def character_asset(character_id: str, rel_path: str, *, root: Path | None = None) -> Path:
+    """Absolute path of a character-relative asset (e.g. ``refs/passport_face.png``).
+
+    Inverse of the "paths in ``state.json`` are relative to the character folder"
+    rule: callers store the relative path, then resolve it here to a real path
+    for the generator (reading a ref) or the UI (showing a preview). Unlike
+    :func:`character_dir` it does not create sub-folders — it only joins a path.
+    """
+    return (root or bucket_root()) / character_id / rel_path
+
+
 def save_state(state: CharacterState, *, root: Path | None = None) -> Path:
     """Write ``state.json`` for ``state`` atomically and return its path."""
     folder = character_dir(state.character_id, root=root)

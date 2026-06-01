@@ -16,12 +16,14 @@ from create_char_passport.screens import handlers
 from create_char_passport.screens.router import SCREEN_ORDER, ScreenId, WizardSession
 from create_char_passport.screens.views import (
     CHAR_DATA_REFRESH_KEYS,
+    PASSPORT_REFRESH_KEYS,
     ScreenHandle,
     build_screens,
     char_data_refresh,
     cost_banner_text,
     home_refresh,
     interactive_update,
+    passport_refresh,
     screen_visibility,
     update_table_fields,
 )
@@ -41,8 +43,12 @@ def _wire_home(home: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     ).then(char_data_refresh, [session], ctx.char_data_outputs).then(
         screen_visibility, [session], ctx.containers
     ).then(cost_banner_text, [session], [ctx.cost_banner])
+    # A saved character can resume straight into the passport phase, so place the
+    # cursor (honouring the need_regen gate) and repaint that form too.
     c["open_saved_btn"].click(handlers.on_open_saved, [session, c["saved"]], [session]).then(
-        char_data_refresh, [session], ctx.char_data_outputs
+        handlers.on_enter_passport, [session], [session]
+    ).then(char_data_refresh, [session], ctx.char_data_outputs).then(
+        passport_refresh, [session], ctx.passport_outputs
     ).then(screen_visibility, [session], ctx.containers).then(
         cost_banner_text, [session], [ctx.cost_banner]
     )
@@ -92,8 +98,38 @@ def _wire_char_data(char_data: ScreenHandle, session: gr.State, ctx: _Ctx) -> No
     c["prop_table"].change(handlers.on_update_props, [session, c["prop_table"]], [session])
 
     c["next_btn"].click(handlers.on_next, [session], [session]).then(
-        screen_visibility, [session], ctx.containers
+        handlers.on_enter_passport, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(
+        passport_refresh, [session], ctx.passport_outputs
     )
+
+
+def _wire_passport(passport: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
+    """Generate / approve / regenerate + intra-phase back/forward for the 5 frames."""
+    c = passport.components
+    layer_inputs = [c["face_box"], c["body_box"], c["outfit_box"]]
+    # Persist layer edits on blur (the handler writes only the editable layers).
+    for box in layer_inputs:
+        box.blur(handlers.on_passport_edit, [session, *layer_inputs], [session])
+
+    # Generate / approve stay on the passport screen — repaint the form only.
+    c["gen_btn"].click(handlers.on_passport_generate, [session, *layer_inputs], [session]).then(
+        passport_refresh, [session], ctx.passport_outputs
+    ).then(cost_banner_text, [session], [ctx.cost_banner])
+    c["approve_btn"].click(handlers.on_passport_approve, [session], [session]).then(
+        passport_refresh, [session], ctx.passport_outputs
+    ).then(cost_banner_text, [session], [ctx.cost_banner])
+
+    # Back can drop to char-data (frame 1); Forward can leave to the next phase —
+    # both may change the visible screen, so toggle visibility + repaint neighbours.
+    c["back_btn"].click(handlers.on_passport_back, [session], [session]).then(
+        screen_visibility, [session], ctx.containers
+    ).then(char_data_refresh, [session], ctx.char_data_outputs).then(
+        passport_refresh, [session], ctx.passport_outputs
+    )
+    c["forward_btn"].click(handlers.on_passport_forward, [session], [session]).then(
+        screen_visibility, [session], ctx.containers
+    ).then(passport_refresh, [session], ctx.passport_outputs)
 
 
 class _Ctx:
@@ -103,6 +139,8 @@ class _Ctx:
         self.containers = [handles[screen].container for screen in SCREEN_ORDER]
         cd = handles[ScreenId.CHAR_DATA].components
         self.char_data_outputs = [cd[key] for key in CHAR_DATA_REFRESH_KEYS]
+        pp = handles[ScreenId.PASSPORT].components
+        self.passport_outputs = [pp[key] for key in PASSPORT_REFRESH_KEYS]
         self.cost_banner = cost_banner
 
 
@@ -130,6 +168,7 @@ def build_demo() -> gr.Blocks:
         _wire_home(home, session, ctx)
         _wire_style(handles[ScreenId.STYLE], session, ctx)
         _wire_char_data(handles[ScreenId.CHAR_DATA], session, ctx)
+        _wire_passport(handles[ScreenId.PASSPORT], session, ctx)
 
         # Populate the saved-characters list + cost banner from the bucket on app
         # open, so a returning user sees their characters without a paid call.
