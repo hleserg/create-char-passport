@@ -384,6 +384,12 @@ def on_passport_forward(session: WizardSession) -> WizardSession:
         return session
     if all_passport_approved(state) and first_pending_passport(state) is None:
         session.current_screen = next_screen(session)
+        # NOTE: ``current_step`` is intentionally left on ``passport_3q`` here.
+        # The next phases (emotions/outfits/props/dataset) are still stubs, so
+        # there is no real next step_key to set, and clearing it would make
+        # resume_screen treat the wizard as finished. When those phases land,
+        # set current_step to the first step of the next enabled phase so a
+        # reopen resumes there rather than back on the passport screen.
         _persist(session)
     else:
         session.notice = "Сначала утвердите все 5 кадров."

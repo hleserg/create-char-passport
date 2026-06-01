@@ -476,7 +476,10 @@ def passport_refresh(session: WizardSession) -> list[Any]:
         "style_box": gr.update(value=layers["style"]),
         "face_box": gr.update(value=layers["face"], interactive="face" in editable),
         "body_box": gr.update(value=layers["body"], interactive="body" in editable),
-        "outfit_box": gr.update(value=layers["outfit"], interactive="outfit" in editable),
+        "outfit_box": gr.update(
+            value=layers["outfit"],
+            interactive=("outfit" in editable) and not state.base_outfit.frozen,
+        ),
         "expression_box": gr.update(value=layers["expression"]),
         "composition_box": gr.update(value=layers["composition"]),
         "gen_btn": gr.update(value="Перегенерить" if has_generation else "Сгенерировать"),

@@ -233,7 +233,9 @@ def apply_layer_edit(
         state.prompt_layers.face = face.strip()
     if body is not None and "body" in editable:
         state.prompt_layers.body = body.strip()
-    if outfit is not None and "outfit" in editable:
+    # OUTFIT is editable on frames 1-2 only until the base outfit is frozen
+    # (after frame-2 approval it is read-only everywhere, §1/§4) — never clobber it.
+    if outfit is not None and "outfit" in editable and not state.base_outfit.frozen:
         state.base_outfit.prompt = outfit.strip()
 
 
@@ -299,6 +301,11 @@ def generate_passport_frame(
     record.last_path = relative
     record.approved_path = None  # a new shot must be (re)approved
     record.prompt_layers = to_prompt_layers(layers)
+    if step_key == "passport_body":
+        # A fresh (unapproved) body shot un-freezes the base outfit it carried —
+        # mirror of approve_passport_frame; it re-freezes on the next approval.
+        state.base_outfit.frozen = False
+        state.base_outfit.ref = None
     if regenerate and is_ref_frame(step_key):
         _flag_downstream_stale(state, step_key)
     return GenerationResult(image_path=str(out), ok=True, error=None, usage=result.usage)

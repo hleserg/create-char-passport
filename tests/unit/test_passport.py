@@ -167,6 +167,17 @@ def test_apply_layer_edit_only_touches_editable_layers() -> None:
     assert state.base_outfit.prompt == "armor"
 
 
+def test_apply_layer_edit_respects_frozen_base_outfit() -> None:
+    state = blank_state("Heron")
+    state.base_outfit.prompt = "frozen cloak"
+    state.base_outfit.frozen = True  # after frame-2 approval the outfit is read-only
+    # OUTFIT is "editable" on frame 1, but a frozen base outfit must not be clobbered
+    # (the user can navigate Back here via the cascade flow).
+    passport.apply_layer_edit(state, "passport_face", face="nose", outfit="HACK")
+    assert state.base_outfit.prompt == "frozen cloak"  # untouched
+    assert state.prompt_layers.face == "nose"  # other editable layers still apply
+
+
 # --------------------------------------------------------------------------- #
 # Generate / regenerate
 # --------------------------------------------------------------------------- #
@@ -241,6 +252,41 @@ def test_regenerate_non_ref_frame_does_not_flag(
     _approved(state, "passport_3q")
     passport.generate_passport_frame(state, "passport_back", regenerate=True)
     assert state.steps["passport_3q"].stale is False
+
+
+def test_regenerate_body_unfreezes_base_outfit(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = blank_state("Heron")
+    save_state(state)
+    monkeypatch.setattr(passport, "generate_image", _fake_ok([]))
+    char_dir = character_dir(state.character_id)
+    (char_dir / "refs/passport_body.png").write_bytes(b"old")
+    state.steps["passport_body"] = StepRecord(last_path="refs/passport_body.png")
+    passport.approve_passport_frame(state, "passport_body")
+    assert state.base_outfit.frozen is True
+    assert state.base_outfit.ref == "refs/passport_body.png"
+    # Regenerating the body yields a fresh, unapproved shot → un-freeze until re-approval,
+    # so base_outfit.ref never points at an archived/unapproved image.
+    passport.generate_passport_frame(state, "passport_body", regenerate=True)
+    assert state.base_outfit.frozen is False
+    assert state.base_outfit.ref is None
+    assert state.steps["passport_body"].approved_path is None
+
+
+def test_failed_ref_frame_regen_does_not_flag_downstream(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = blank_state("Heron")
+    save_state(state)
+    _approved(state, "passport_face")
+    _approved(state, "passport_body")  # a downstream approved frame
+    monkeypatch.setattr(passport, "generate_image", _fake_fail)
+    result = passport.generate_passport_frame(state, "passport_face", regenerate=True)
+    assert not result.ok
+    # The cascade flag must NOT be raised when the regeneration itself failed
+    # (the early return precedes _flag_downstream_stale).
+    assert state.steps["passport_body"].stale is False
 
 
 def test_regenerate_clears_own_flags(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:

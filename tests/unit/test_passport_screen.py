@@ -17,7 +17,7 @@ from create_char_passport.screens.views import (
     render_passport,
 )
 from create_char_passport.state import CharacterState, StepRecord, blank_state
-from create_char_passport.storage import character_dir, save_state
+from create_char_passport.storage import character_dir, load_state, save_state
 from create_char_passport.wizard import passport
 
 
@@ -202,6 +202,54 @@ def test_on_passport_forward_last_frame_not_all_approved_notices(bucket: Path) -
     out = handlers.on_passport_forward(session)
     assert out.current_screen is ScreenId.PASSPORT
     assert "все 5" in out.notice.lower()
+
+
+def test_on_passport_forward_blocked_when_last_frame_needs_regen(bucket: Path) -> None:
+    session, char = _started(bucket)
+    for key in (
+        "passport_face",
+        "passport_body",
+        "passport_profile",
+        "passport_back",
+        "passport_3q",
+    ):
+        char.steps[key] = StepRecord(approved_path=f"refs/{key}.png")
+    # The last frame itself is flagged need_regen: the gate must still block the
+    # forward exit even though all five have an approved_path (the discriminating case).
+    char.steps["passport_3q"].need_regen = True
+    char.current_step = "passport_3q"
+    out = handlers.on_passport_forward(session)
+    assert out.current_screen is ScreenId.PASSPORT  # need_regen conjunct blocks exit
+    assert "все 5" in out.notice.lower()
+
+
+# --------------------------------------------------------------------------- #
+# Persistence (state.json round-trip)
+# --------------------------------------------------------------------------- #
+def test_on_passport_approve_persists_to_disk(bucket: Path) -> None:
+    session, char = _started(bucket)
+    char.current_step = "passport_face"
+    char.steps["passport_face"] = StepRecord(last_path="refs/passport_face.png")
+    handlers.on_passport_approve(session)
+    reloaded = load_state(char.character_id)
+    assert reloaded is not None
+    assert reloaded.steps["passport_face"].approved_path == "refs/passport_face.png"
+    assert reloaded.current_step == "passport_body"  # cursor advance persisted
+
+
+def test_stale_flag_round_trips_through_disk(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(passport, "generate_image", _fake_ok)
+    session, char = _started(bucket)
+    cdir = character_dir(char.character_id)
+    for key in ("passport_face", "passport_body", "passport_profile"):
+        (cdir / f"refs/{key}.png").write_bytes(b"img")
+        char.steps[key] = StepRecord(last_path=f"refs/{key}.png", approved_path=f"refs/{key}.png")
+    char.current_step = "passport_face"
+    handlers.on_passport_generate(session, face="nose", body="", outfit="tunic")  # regen FACE
+    assert char.steps["passport_profile"].stale is True
+    reloaded = load_state(char.character_id)
+    assert reloaded is not None
+    assert reloaded.steps["passport_profile"].stale is True  # serialization round-trip
 
 
 # --------------------------------------------------------------------------- #
