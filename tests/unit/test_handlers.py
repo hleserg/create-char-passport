@@ -11,7 +11,7 @@ from create_char_passport.config import get_settings
 from create_char_passport.screens import handlers
 from create_char_passport.screens.router import ScreenId, WizardSession
 from create_char_passport.state import blank_state
-from create_char_passport.storage import load_state, save_state
+from create_char_passport.storage import character_asset, load_state, save_state
 from create_char_passport.wizard import ExtractedCharacter
 
 
@@ -201,6 +201,34 @@ def test_approve_style_without_character_returns_home() -> None:
     out = handlers.on_approve_style(WizardSession(), "x")
     assert out.current_screen is ScreenId.HOME
     assert out.style_approved is True
+
+
+def test_approve_style_persists_style_ref_image(bucket: Path) -> None:
+    img = bucket / "comic1.png"
+    img.write_bytes(b"comic")
+    session = WizardSession()
+    session.character = blank_state("Conan")
+    out = handlers.on_approve_style(session, "inked comic", [str(img)])
+    assert out.character is not None
+    assert out.character.style_ref == "refs/style.png"  # image persisted + recorded
+    assert out.style_image_path  # stable path remembered for later characters
+    reloaded = load_state("conan")
+    assert reloaded is not None
+    assert reloaded.style_ref == "refs/style.png"
+
+
+def test_style_ref_propagates_to_second_character(bucket: Path) -> None:
+    img = bucket / "comic1.png"
+    img.write_bytes(b"comic")
+    session = WizardSession()
+    session.character = blank_state("Conan")
+    handlers.on_approve_style(session, "inked comic", [str(img)])
+    # Pick a second extracted character in the same session — it inherits the style image.
+    session.extracted_characters = [ExtractedCharacter(name="Tyra")]
+    out = handlers.on_pick_extracted(session, "Tyra")
+    assert out.character is not None
+    assert out.character.style_ref == "refs/style.png"
+    assert character_asset(out.character.character_id, "refs/style.png").is_file()
 
 
 # --------------------------------------------------------------------------- #

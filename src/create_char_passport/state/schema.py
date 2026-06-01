@@ -141,6 +141,12 @@ class StepRecord:
     approved_path: str | None = None
     prompt_layers: PromptLayers = field(default_factory=PromptLayers)
     need_regen: bool = False
+    # Soft cascade flag (passport §5): raised on a later, already-approved frame
+    # when an identity-reference frame (FACE/BODY) is regenerated, so the UI can
+    # warn "the base shifted — re-check this one". Distinct from ``need_regen``:
+    # advisory only (the user decides), never forces a jump-back. Cleared when
+    # this frame is itself regenerated or (re)approved.
+    stale: bool = False
 
 
 @dataclass(slots=True)
@@ -190,6 +196,10 @@ class CharacterState:
     props_enabled: bool = False
     props: list[PropEntry] = field(default_factory=list)
     prompt_layers: PromptLayers = field(default_factory=PromptLayers)
+    # Project STYLE reference *image* (relative path, e.g. ``refs/style.png``).
+    # Complements the frozen ``prompt_layers.style`` text: attached with role
+    # ``style`` to every generation so the model copies the manner, not content.
+    style_ref: str | None = None
     steps: dict[str, StepRecord] = field(default_factory=dict)
     current_step: str | None = None
     dataset_compositions: list[str] = field(default_factory=list)
@@ -298,6 +308,7 @@ def _step_record(data: dict[str, Any]) -> StepRecord:
         approved_path=data.get("approved_path"),
         prompt_layers=_prompt_layers(data.get("prompt_layers")),
         need_regen=bool(data.get("need_regen", False)),
+        stale=bool(data.get("stale", False)),
     )
 
 
@@ -315,6 +326,7 @@ def state_from_dict(data: dict[str, Any]) -> CharacterState:
         props_enabled=bool(data.get("props_enabled", False)),
         props=[_prop_entry(p) for p in (data.get("props") or [])],
         prompt_layers=_prompt_layers(data.get("prompt_layers")),
+        style_ref=data.get("style_ref"),
         steps={k: _step_record(v) for k, v in (data.get("steps") or {}).items()},
         current_step=data.get("current_step"),
         dataset_compositions=list(data.get("dataset_compositions") or []),

@@ -70,6 +70,9 @@ class WizardSession:
     character: CharacterState | None = None
     style_approved: bool = False
     style_prompt: str = ""
+    # Stable path to the approved STYLE reference image (a persisted copy), so a
+    # second character picked in the same session also gets the style ref attached.
+    style_image_path: str = ""
     notice: str = ""
     # Running API spend for the whole session (incl. pre-character calls like
     # extraction); the per-character figure lives on ``character.cost``.
