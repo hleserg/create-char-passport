@@ -34,7 +34,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from create_char_passport.config import get_settings
+from create_char_passport.gen.pricing import (
+    CallUsage,
+    extract_usage,
+    record_image,
+    record_llm,
+)
 from create_char_passport.gen.prompt import LAYER_NAMES, render_prompt_text
+from create_char_passport.state import CostLedger
 
 logger = logging.getLogger(__name__)
 
@@ -57,12 +64,15 @@ class GenerationResult:
 
     ``ok`` is the bit the UI cares about: when ``False``, ``error`` carries
     a short user-friendly message and ``image_path`` is ``None`` (so we
-    never write back a "step succeeded" flag for a failed call).
+    never write back a "step succeeded" flag for a failed call). ``usage``
+    carries the response's token counts for transparency (cost is metered via
+    the ``meter`` argument; see :mod:`create_char_passport.gen.pricing`).
     """
 
     image_path: str | None
     ok: bool
     error: str | None = None
+    usage: CallUsage | None = None
 
 
 _OUTFIT_CONFLICT_RULE = (
@@ -166,25 +176,29 @@ def generate_image(
     *,
     output_path: str | Path,
     model: str | None = None,
+    meter: CostLedger | None = None,
 ) -> GenerationResult:
     """Render one image — single entry point used by every generation step.
 
     ``output_path`` is where the resulting PNG bytes are written when the
     call succeeds. ``model`` overrides ``settings.image_model`` (useful for
-    swapping to Nano Banana Pro when identity drifts on NB2).
+    swapping to Nano Banana Pro when identity drifts on NB2). When a ``meter``
+    is passed, a *successful* call's cost is added to it (a failed call is
+    never billed).
     """
     try:
         from google.genai import types as genai_types  # type: ignore[import-not-found]
     except ImportError as exc:  # pragma: no cover - SDK is a hard dependency
         return GenerationResult(image_path=None, ok=False, error=f"SDK missing: {exc}")
 
+    resolved_model = model or get_settings().image_model
     try:
         client = _get_client()
         config = genai_types.GenerateContentConfig(
             response_modalities=[genai_types.Modality.IMAGE, genai_types.Modality.TEXT],
         )
         response = client.models.generate_content(
-            model=model or get_settings().image_model,
+            model=resolved_model,
             contents=_build_contents(prompt_layers, refs, outfit_conflict),
             config=config,
         )
@@ -206,7 +220,9 @@ def generate_image(
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(data)
-    return GenerationResult(image_path=str(out), ok=True, error=None)
+    if meter is not None:
+        record_image(meter, resolved_model)
+    return GenerationResult(image_path=str(out), ok=True, error=None, usage=extract_usage(response))
 
 
 def call_llm(
@@ -215,6 +231,7 @@ def call_llm(
     *,
     images_b64: list[str] | None = None,
     model: str | None = None,
+    meter: CostLedger | None = None,
 ) -> str:
     """LLM text call — used by extract-characters, style prompt, AI-check, AI-edit.
 
@@ -226,7 +243,8 @@ def call_llm(
     Returns the raw LLM text on success, or an empty string on any API
     failure (the caller decides how to surface the retry). Errors are
     logged at WARNING level without the prompt body — never log raw user
-    input (AGENTS.md hard rule).
+    input (AGENTS.md hard rule). When a ``meter`` is passed, a *successful*
+    call's token cost is added to it (a failed call is never billed).
     """
     parts: list[dict[str, Any]] = [{"text": prompt}]
     inline = list(images_b64 or [])
@@ -235,16 +253,19 @@ def call_llm(
     for data in reversed(inline):
         parts.insert(0, {"inline_data": {"mime_type": "image/png", "data": data}})
 
+    resolved_model = model or get_settings().llm_model
     try:
         client = _get_client()
         response = client.models.generate_content(
-            model=model or get_settings().llm_model,
+            model=resolved_model,
             contents=parts,
         )
     except Exception as exc:
         logger.warning("llm call failed: %s", exc.__class__.__name__)
         return ""
 
+    if meter is not None:
+        record_llm(meter, resolved_model, extract_usage(response))
     return _extract_text(response)
 
 

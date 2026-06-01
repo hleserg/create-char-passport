@@ -34,9 +34,17 @@ class FakeCandidate:
 
 
 @dataclass
+class FakeUsage:
+    prompt_token_count: int = 0
+    candidates_token_count: int = 0
+    thoughts_token_count: int = 0
+
+
+@dataclass
 class FakeResponse:
     candidates: list[FakeCandidate]
     text: str | None = None
+    usage_metadata: FakeUsage | None = None
 
 
 @dataclass
@@ -185,6 +193,67 @@ def test_generate_image_handles_generic_error(
     result = generate_image(prompt_layers={}, refs=[], output_path=tmp_path / "x.png")
     assert result.ok is False
     assert "Generation failed" in (result.error or "")
+
+
+def test_generate_image_records_cost_into_meter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from create_char_passport.state import CostLedger
+
+    response = FakeResponse(
+        candidates=[
+            FakeCandidate(
+                content=FakeContent(parts=[FakePart(inline_data=FakeInline(data=b"png"))])
+            )
+        ],
+        usage_metadata=FakeUsage(prompt_token_count=500, candidates_token_count=1290),
+    )
+    _patch_client(monkeypatch, response)
+    meter = CostLedger()
+    result = generate_image(
+        prompt_layers={},
+        refs=[],
+        output_path=tmp_path / "x.png",
+        model="gemini-3-pro-image-preview",
+        meter=meter,
+    )
+    assert result.ok is True
+    assert meter.image_calls == 1
+    assert meter.image_usd == pytest.approx(0.13)  # flat per-image
+    assert result.usage is not None and result.usage.prompt_tokens == 500
+
+
+def test_call_llm_records_cost_into_meter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from create_char_passport.state import CostLedger
+
+    response = FakeResponse(
+        candidates=[FakeCandidate(content=FakeContent(parts=[FakePart(text="hi")]))],
+        usage_metadata=FakeUsage(prompt_token_count=1_000_000, candidates_token_count=1_000_000),
+    )
+    _patch_client(monkeypatch, response)
+    meter = CostLedger()
+    call_llm("x", model="gemini-2.5-flash", meter=meter)
+    assert meter.llm_calls == 1
+    assert meter.llm_usd == pytest.approx(0.30 + 2.50)
+
+
+def test_failed_call_does_not_bill_meter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from create_char_passport.state import CostLedger
+
+    class Client:
+        @property
+        def models(self) -> Any:
+            class M:
+                def generate_content(self, **_: Any) -> Any:
+                    raise RuntimeError("boom")
+
+            return M()
+
+    monkeypatch.setattr(engine_mod, "_get_client", lambda: Client())
+    meter = CostLedger()
+    assert call_llm("x", meter=meter) == ""
+    assert meter.llm_calls == 0
+    assert meter.llm_usd == 0.0
 
 
 def test_call_llm_returns_text(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -26,7 +26,7 @@ from create_char_passport.screens.router import (
     ScreenId,
     WizardSession,
 )
-from create_char_passport.state import CHARACTER_TABLE_FIELDS, CHARACTER_TABLE_KEYS
+from create_char_passport.state import CHARACTER_TABLE_FIELDS, CHARACTER_TABLE_KEYS, CostLedger
 from create_char_passport.wizard import (
     BASE_OUTFIT_PLACEHOLDER,
     base_outfit_display,
@@ -363,3 +363,25 @@ def update_table_fields(session: WizardSession, *field_values: str) -> WizardSes
 def interactive_update(enabled: bool) -> Any:
     """A single ``gr.update(interactive=...)`` — greys a block out when off."""
     return gr.update(interactive=bool(enabled))
+
+
+def _fmt_cost(ledger: CostLedger) -> str:
+    """Format a ledger total, marking it ``≈`` only when it really is an estimate."""
+    prefix = "≈" if ledger.has_estimate else ""
+    return f"{prefix}${ledger.total_usd:.4f}"
+
+
+def cost_banner_text(session: WizardSession) -> str:
+    """Markdown for the global running-cost banner shown on every screen.
+
+    Shows the active character's spend plus the session total (which also
+    covers pre-character calls like extraction). A figure is marked ``≈`` only
+    when an approximate / unknown list price actually fed into it (e.g. a
+    preview image model) — see :mod:`create_char_passport.gen.pricing`.
+    """
+    session_total = _fmt_cost(session.cost)
+    char = session.character
+    if char is None:
+        return f"💸 Сессия: {session_total}"
+    name = char.name or char.character_id
+    return f"💸 Персонаж «{name}»: {_fmt_cost(char.cost)} · Сессия: {session_total}"

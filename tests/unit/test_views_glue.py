@@ -12,13 +12,14 @@ from create_char_passport.screens.router import SCREEN_ORDER, ScreenId, WizardSe
 from create_char_passport.screens.views import (
     CHAR_DATA_REFRESH_KEYS,
     char_data_refresh,
+    cost_banner_text,
     home_refresh,
     interactive_update,
     saved_choices,
     screen_visibility,
     update_table_fields,
 )
-from create_char_passport.state import CHARACTER_TABLE_KEYS, blank_state
+from create_char_passport.state import CHARACTER_TABLE_KEYS, CostLedger, blank_state
 from create_char_passport.storage import save_state
 from create_char_passport.wizard import ExtractedCharacter
 
@@ -107,3 +108,33 @@ def test_update_table_fields_zips_values(bucket: Path) -> None:
 def test_interactive_update() -> None:
     assert interactive_update(True)["interactive"] is True
     assert interactive_update(False)["interactive"] is False
+
+
+def test_cost_banner_session_only_when_no_character() -> None:
+    session = WizardSession()
+    session.cost.merge(CostLedger(llm_usd=0.0123, llm_calls=1))
+    text = cost_banner_text(session)
+    assert "Сессия" in text
+    assert "0.0123" in text
+    assert "Персонаж" not in text
+
+
+def test_cost_banner_shows_character_and_session() -> None:
+    session = WizardSession()
+    session.character = blank_state("Conan")
+    session.character.cost.merge(CostLedger(image_usd=0.05, image_calls=1))
+    session.cost.merge(CostLedger(image_usd=0.05, llm_usd=0.01, image_calls=1, llm_calls=1))
+    text = cost_banner_text(session)
+    assert "Персонаж «Conan»" in text
+    assert "0.0500" in text  # character total
+    assert "0.0600" in text  # session total
+
+
+def test_cost_banner_marks_estimate_only_when_approximate() -> None:
+    exact = WizardSession()
+    exact.cost.merge(CostLedger(llm_usd=0.01, llm_calls=1, has_estimate=False))
+    assert "≈" not in cost_banner_text(exact)  # exact prices -> no estimate mark
+
+    approx = WizardSession()
+    approx.cost.merge(CostLedger(image_usd=0.04, image_calls=1, has_estimate=True))
+    assert "≈" in cost_banner_text(approx)  # a preview/unknown price was used
