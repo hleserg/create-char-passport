@@ -289,6 +289,22 @@ def test_failed_ref_frame_regen_does_not_flag_downstream(
     assert state.steps["passport_body"].stale is False
 
 
+def test_failed_regen_keeps_own_flags(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    state = blank_state("Heron")
+    save_state(state)
+    (character_dir(state.character_id) / "refs/passport_profile.png").write_bytes(b"old")
+    state.steps["passport_profile"] = StepRecord(
+        last_path="refs/passport_profile.png", need_regen=True, stale=True
+    )
+    monkeypatch.setattr(passport, "generate_image", _fake_fail)
+    result = passport.generate_passport_frame(state, "passport_profile", regenerate=True)
+    assert not result.ok
+    # A failed regen must NOT clear the gate/warning — the frame was not redone,
+    # so the cascade warning (and any need_regen) must survive (Devin review).
+    assert state.steps["passport_profile"].need_regen is True
+    assert state.steps["passport_profile"].stale is True
+
+
 def test_regenerate_clears_own_flags(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     state = blank_state("Heron")
     save_state(state)

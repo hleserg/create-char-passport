@@ -276,11 +276,6 @@ def generate_passport_frame(
     pending = out.with_name(f"{out.name}.pending")
 
     record = state.steps.setdefault(step_key, StepRecord())
-    if regenerate:
-        # §5: «Перегенерить» clears the AI-edit gate and this frame's own warning.
-        record.need_regen = False
-        record.stale = False
-
     layers = build_prompt_layers(state, step_key, overrides=build_step_overrides(state, step_key))
     refs = passport_refs(state, step_key)
     result = generate_image(
@@ -295,6 +290,12 @@ def generate_passport_frame(
         pending.unlink(missing_ok=True)
         return result
 
+    if regenerate:
+        # §5: a SUCCESSFUL «Перегенерить» clears the AI-edit gate and this frame's
+        # own cascade warning. A failed attempt (early return above) leaves them
+        # intact — the frame really wasn't regenerated, so it is still stale.
+        record.need_regen = False
+        record.stale = False
     if out.exists():
         archive_to_rejected(char_dir, step_key, out)
     pending.replace(out)
