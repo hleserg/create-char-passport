@@ -71,6 +71,14 @@ def test_classify_step_unknown_raises() -> None:
         classify_step("bogus")
 
 
+def test_classify_step_outfit_id_with_detail_in_name_is_not_detail() -> None:
+    # Regression: id containing "_detail_" but no trailing _detail_<N> must
+    # still classify as OUTFIT, not OUTFIT_DETAIL.
+    assert classify_step("outfit_some_detail_heavy") is StepKind.OUTFIT
+    # Tail-anchored regex still catches the real detail key.
+    assert classify_step("outfit_some_detail_heavy_detail_2") is StepKind.OUTFIT_DETAIL
+
+
 def test_is_passport_step() -> None:
     assert is_passport_step("passport_face") is True
     assert is_passport_step("emotion_neutral") is False

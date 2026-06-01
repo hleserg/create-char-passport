@@ -37,6 +37,7 @@ DATASET_PREFIX: str = "dataset_"
 ALL_STATIC_STEPS: tuple[str, ...] = (*PASSPORT_STEPS, BASE_EMOTION_STEP)
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_OUTFIT_DETAIL_RE = re.compile(r"_detail_\d+$")
 
 
 class StepKind(StrEnum):
@@ -101,7 +102,10 @@ def classify_step(step_key: str) -> StepKind:
     if step_key.startswith(EMOTION_PREFIX):
         return StepKind.EMOTION
     if step_key.startswith(OUTFIT_PREFIX):
-        return StepKind.OUTFIT_DETAIL if "_detail_" in step_key else StepKind.OUTFIT
+        # Tail-anchored ``_detail_<int>`` only — substring would misclassify
+        # outfit ids that happen to contain ``_detail_`` (and collide with a
+        # detail key on those ids).
+        return StepKind.OUTFIT_DETAIL if _OUTFIT_DETAIL_RE.search(step_key) else StepKind.OUTFIT
     if step_key.startswith(PROP_PREFIX):
         return StepKind.PROP
     if step_key.startswith(DATASET_PREFIX):
