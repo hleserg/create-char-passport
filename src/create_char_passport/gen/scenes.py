@@ -140,6 +140,7 @@ STEP_SCENE: dict[str, SceneId] = {
 
 
 def _require_known(scene_id: str) -> None:
+    """Guard: raise ``ValueError`` unless ``scene_id`` is a registered scene."""
     if scene_id not in SCENE_PRESETS:
         msg = f"unknown scene id: {scene_id!r}"
         raise ValueError(msg)
@@ -154,9 +155,14 @@ def default_composition(scene_id: str) -> str:
 def scene_for_step(step_key: str) -> SceneId | None:
     """Scene a single-scene ``step_key`` renders, or ``None``.
 
-    Passport frames and the base-emotion portrait map to a fixed scene;
-    emotion-series steps are all portraits. Outfit / prop / dataset steps
-    return ``None`` (multiple scenes or free-form composition).
+    Resolution is two-tier: the fixed ``STEP_SCENE`` map covers the passport
+    frames and the base-emotion portrait; emotion-series steps
+    (``emotion_<value>``, deliberately absent from the map) are classified to
+    the portrait scene. Outfit / prop / dataset steps return ``None`` (multiple
+    scenes or free-form composition).
+
+    Raises ``ValueError`` on an unrecognized ``step_key`` — same contract as
+    :func:`create_char_passport.state.classify_step` (fail fast on a bad key).
     """
     fixed = STEP_SCENE.get(step_key)
     if fixed is not None:
@@ -167,9 +173,14 @@ def scene_for_step(step_key: str) -> SceneId | None:
 
 
 def effective_composition(state: CharacterState, scene_id: str) -> str:
-    """Override for ``scene_id`` if the character set one, else the registry default."""
+    """Override for ``scene_id`` if the character set one, else the registry default.
+
+    The stored override is stripped defensively, so a blank / whitespace-only
+    value (e.g. from a hand-edited ``state.json``) falls back to the registry
+    default rather than emptying the COMPOSITION layer.
+    """
     _require_known(scene_id)
-    return state.scene_overrides.get(scene_id) or SCENE_PRESETS[scene_id]
+    return (state.scene_overrides.get(scene_id) or "").strip() or SCENE_PRESETS[scene_id]
 
 
 def set_scene_override(state: CharacterState, scene_id: str, text: str) -> None:

@@ -14,8 +14,6 @@ from create_char_passport.gen.engine import (
 )
 from create_char_passport.gen.prompt import build_prompt_layers, render_prompt_text
 from create_char_passport.gen.scenes import (
-    SCENE_LABELS,
-    SCENE_PRESETS,
     SceneId,
     build_step_overrides,
     clear_scene_override,
@@ -27,8 +25,6 @@ from create_char_passport.gen.scenes import (
 
 __all__ = [
     "LAYER_ORDER",
-    "SCENE_LABELS",
-    "SCENE_PRESETS",
     "GenerationResult",
     "Ref",
     "SceneId",

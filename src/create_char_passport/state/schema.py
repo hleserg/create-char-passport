@@ -272,5 +272,8 @@ def state_from_dict(data: dict[str, Any]) -> CharacterState:
         steps={k: _step_record(v) for k, v in (data.get("steps") or {}).items()},
         current_step=data.get("current_step"),
         dataset_compositions=list(data.get("dataset_compositions") or []),
+        # ``str()`` coercion is deliberate defensive parsing of an external,
+        # possibly hand-edited file — keys/values are forced to the declared
+        # ``dict[str, str]`` shape rather than trusting the JSON types.
         scene_overrides={str(k): str(v) for k, v in (data.get("scene_overrides") or {}).items()},
     )

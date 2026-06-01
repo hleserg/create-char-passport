@@ -60,6 +60,12 @@ def test_scene_for_step_multi_or_free_steps_return_none(step_key: str) -> None:
     assert scene_for_step(step_key) is None
 
 
+def test_scene_for_step_unknown_raises() -> None:
+    # Fail fast on a bad key, mirroring classify_step's contract.
+    with pytest.raises(ValueError, match="unknown step_key"):
+        scene_for_step("totally_bogus")
+
+
 def test_effective_composition_falls_back_to_default() -> None:
     state = blank_state("Conan")
     assert effective_composition(state, SceneId.FRONT_FULL) == SCENE_PRESETS[SceneId.FRONT_FULL]
@@ -68,6 +74,16 @@ def test_effective_composition_falls_back_to_default() -> None:
 def test_effective_composition_unknown_raises() -> None:
     with pytest.raises(ValueError, match="unknown scene id"):
         effective_composition(blank_state("Conan"), "ghost")
+
+
+def test_effective_composition_ignores_whitespace_only_override() -> None:
+    # A corrupted / hand-edited blank override must not empty the layer.
+    state = blank_state("Conan")
+    state.scene_overrides["front_portrait"] = "   "
+    assert (
+        effective_composition(state, SceneId.FRONT_PORTRAIT)
+        == SCENE_PRESETS[SceneId.FRONT_PORTRAIT]
+    )
 
 
 def test_set_scene_override_stores_and_resolves() -> None:
