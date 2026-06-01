@@ -144,9 +144,19 @@ def test_generate_base_emotion_sets_ref(bucket: Path, monkeypatch: pytest.Monkey
 
 def test_missing_emotion_refs(bucket: Path) -> None:
     state = blank_state("Heron")
+    state.emotions.enabled = True  # series counts only when the block is on
     assert emotions.missing_emotion_refs(state) == ["neutral", "angry, furious", "smiling warmly"]
     for item in state.emotions.items:
         item.ref = "refs/x.png"
     assert emotions.missing_emotion_refs(state) == []
     state.emotions.base_emotion.enabled = True  # enabled but ungenerated → listed
     assert emotions.missing_emotion_refs(state) == ["базовая эмоция"]
+
+
+def test_missing_emotion_refs_base_only(bucket: Path) -> None:
+    """Series off + base on: only the base emotion is required (not the defaults)."""
+    state = blank_state("Heron")  # emotions.enabled is False by default
+    state.emotions.base_emotion.enabled = True
+    assert emotions.missing_emotion_refs(state) == ["базовая эмоция"]
+    state.emotions.base_emotion.ref = "refs/base_emotion.png"
+    assert emotions.missing_emotion_refs(state) == []

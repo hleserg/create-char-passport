@@ -321,6 +321,7 @@ def render_passport() -> ScreenHandle:
 
 # Components refreshed when the emotions screen (re)renders, in fixed order.
 EMOTIONS_REFRESH_KEYS: tuple[str, ...] = (
+    "emotion_row",
     "emo_label_0",
     "emo_preview_0",
     "emo_label_1",
@@ -344,7 +345,7 @@ def render_emotions() -> ScreenHandle:
     components: dict[str, Any] = {}
     with gr.Group(visible=False) as group:
         _heading(ScreenId.EMOTIONS, "Сгенерируй портрет для каждой эмоции (по кнопке под кадром).")
-        with gr.Row():
+        with gr.Row() as emotion_row:
             for i in range(_EMOTION_CELLS):
                 with gr.Column():
                     components[f"emo_label_{i}"] = gr.Markdown(f"**эмоция {i + 1}**")
@@ -354,6 +355,9 @@ def render_emotions() -> ScreenHandle:
                     components[f"emo_gen_{i}"] = gr.Button(
                         "Сгенерировать", elem_id=f"emotion-generate-{i}"
                     )
+        # The series row is hidden in a base-only state (Emotions block off) so its
+        # generate buttons are unreachable and can't bill out-of-pipeline frames.
+        components["emotion_row"] = emotion_row
 
         components["base_emotion_enabled"] = gr.Checkbox(
             label="Базовая эмоция персонажа", value=False
@@ -575,9 +579,10 @@ def emotions_refresh(session: WizardSession) -> list[Any]:
         return [gr.update() for _ in EMOTIONS_REFRESH_KEYS]
     items = state.emotions.items
     base = state.emotions.base_emotion
-    values: dict[str, Any] = {}
+    series_on = state.emotions.enabled
+    values: dict[str, Any] = {"emotion_row": gr.update(visible=series_on)}
     for i in range(_EMOTION_CELLS):
-        item = items[i] if i < len(items) else None
+        item = items[i] if (series_on and i < len(items)) else None
         preview: str | None = None
         if item is not None and item.ref:
             path = character_asset(state.character_id, item.ref)

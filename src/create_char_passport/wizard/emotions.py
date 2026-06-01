@@ -82,10 +82,14 @@ def generate_base_emotion(
 def missing_emotion_refs(state: CharacterState) -> list[str]:
     """Emotion labels still without a generated ref — drives the approve dialog.
 
-    Includes the base emotion only when its block is enabled but ungenerated.
+    Mirrors the pipeline (``ordered_step_keys``): the 3 series emotions count
+    only when the "Emotions" block is on; the base emotion counts only when its
+    block is enabled but ungenerated. A base-only state therefore requires just
+    the base emotion (not the always-populated default series).
     """
-    missing = [item.value for item in state.emotions.items if not item.ref]
-    base = state.emotions.base_emotion
+    emotions = state.emotions
+    missing = [item.value for item in emotions.items if not item.ref] if emotions.enabled else []
+    base = emotions.base_emotion
     if base.enabled and not base.ref:
         missing.append("базовая эмоция")
     return missing
