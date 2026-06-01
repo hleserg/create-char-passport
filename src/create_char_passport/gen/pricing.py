@@ -56,15 +56,16 @@ class ModelPrice:
     approximate: bool = False
 
 
-# Token rates are per 1,000,000 tokens; image rate is per generated image.
+# LLM models use per-MTok token rates. Image models are priced ALL-IN per
+# generated image (``record_image`` only ever charges ``per_image``): the small
+# per-call input-token cost is folded into that figure — a documented
+# approximation, so image entries deliberately leave the token rates at 0.
 # Sources: Gemini API pricing page (2.5-flash family). Nano Banana 2 / Pro are
 # preview models with no public list price → estimated from the §7 range
 # ($0.04–0.13/image) and flagged ``approximate``.
 MODEL_PRICES: dict[str, ModelPrice] = {
     "gemini-2.5-flash": ModelPrice(input_per_mtok=0.30, output_per_mtok=2.50),
-    "gemini-2.5-flash-image": ModelPrice(
-        input_per_mtok=0.30, output_per_mtok=2.50, per_image=0.039
-    ),
+    "gemini-2.5-flash-image": ModelPrice(per_image=0.039),
     "gemini-3.1-flash-image-preview": ModelPrice(per_image=0.04, approximate=True),
     "gemini-3-pro-image-preview": ModelPrice(per_image=0.13, approximate=True),
 }
