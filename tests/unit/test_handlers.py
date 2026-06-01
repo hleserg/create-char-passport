@@ -201,3 +201,28 @@ def test_rows_coercion_handles_dict_and_garbage(bucket: Path) -> None:
     session.character = blank_state("Conan")
     handlers.on_update_outfits(session, "not-a-list")
     assert session.character.outfits == []
+
+
+# --------------------------------------------------------------------------- #
+# Scene editing (COMPOSITION override)
+# --------------------------------------------------------------------------- #
+def test_on_set_and_clear_scene_override_persist(bucket: Path) -> None:
+    session = WizardSession()
+    session.character = blank_state("Conan")
+
+    handlers.on_set_scene_override(session, "front_portrait", "tight crop, eye level")
+    saved = load_state("conan")
+    assert saved is not None
+    assert saved.scene_overrides == {"front_portrait": "tight crop, eye level"}
+
+    handlers.on_clear_scene_override(session, "front_portrait")
+    saved = load_state("conan")
+    assert saved is not None
+    assert saved.scene_overrides == {}
+
+
+def test_scene_override_handlers_noop_without_character() -> None:
+    session = WizardSession()
+    handlers.on_set_scene_override(session, "front_portrait", "x")
+    handlers.on_clear_scene_override(session, "front_portrait")
+    assert session.character is None

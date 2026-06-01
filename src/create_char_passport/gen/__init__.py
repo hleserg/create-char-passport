@@ -13,13 +13,33 @@ from create_char_passport.gen.engine import (
     generate_image,
 )
 from create_char_passport.gen.prompt import build_prompt_layers, render_prompt_text
+from create_char_passport.gen.scenes import (
+    SCENE_LABELS,
+    SCENE_PRESETS,
+    SceneId,
+    build_step_overrides,
+    clear_scene_override,
+    default_composition,
+    effective_composition,
+    scene_for_step,
+    set_scene_override,
+)
 
 __all__ = [
     "LAYER_ORDER",
+    "SCENE_LABELS",
+    "SCENE_PRESETS",
     "GenerationResult",
     "Ref",
+    "SceneId",
     "build_prompt_layers",
+    "build_step_overrides",
     "call_llm",
+    "clear_scene_override",
+    "default_composition",
+    "effective_composition",
     "generate_image",
     "render_prompt_text",
+    "scene_for_step",
+    "set_scene_override",
 ]
