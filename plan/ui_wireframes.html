@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Генерация персонажей — Wireframes (HLE-661)</title>
+<style>
+  :root{
+    --ink:#1a2230; --ink-soft:#52607a; --line:#2f3b52;
+    --paper:#eef1f4; --card:#ffffff; --grey:#d4dae2; --grey-fill:#e6eaf0;
+    --accent:#0f5b78; --accent-soft:#d7ebf2; --warn:#9a5a00; --warn-soft:#fff1d6;
+    --lock:#7a8296; --dash:#9aa6bc; --ok:#1f7a4d; --ok-soft:#d8f0e2;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:"DejaVu Sans",-apple-system,system-ui,sans-serif;
+    font-size:14px; line-height:1.45;
+  }
+  code,.mono{font-family:"DejaVu Sans Mono",ui-monospace,Menlo,Consolas,monospace}
+  header{
+    padding:22px 28px; border-bottom:2px solid var(--line);
+    background:var(--card);
+  }
+  header h1{margin:0 0 4px; font-size:19px; letter-spacing:.2px}
+  header .sub{color:var(--ink-soft); font-size:13px}
+  header .sub code{background:var(--grey-fill); padding:1px 5px; border-radius:3px}
+  .tabs{
+    display:flex; flex-wrap:wrap; gap:6px; padding:14px 28px 0;
+    background:var(--card); border-bottom:1px solid var(--grey);
+    position:sticky; top:0; z-index:20;
+  }
+  .tab{
+    border:1px solid var(--line); border-bottom:none; background:var(--grey-fill);
+    padding:8px 14px; cursor:pointer; font-size:13px; border-radius:6px 6px 0 0;
+    color:var(--ink-soft); user-select:none; white-space:nowrap;
+  }
+  .tab.active{background:var(--card); color:var(--ink); font-weight:600; box-shadow:0 -2px 0 var(--accent) inset}
+  .wrap{max-width:1080px; margin:0 auto; padding:26px 28px 80px}
+  .screen{display:none}
+  .screen.active{display:block; animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .screen > h2{font-size:17px; margin:0 0 2px}
+  .screen > .ctx{color:var(--ink-soft); font-size:13px; margin:0 0 18px}
+  .screen > .ctx code{background:var(--grey-fill); padding:1px 5px; border-radius:3px}
+  /* device frame */
+  .device{
+    border:2px solid var(--line); border-radius:12px; background:var(--card);
+    padding:0; overflow:hidden; box-shadow:0 6px 22px rgba(20,30,50,.07);
+    max-width:520px;
+  }
+  .bar{
+    background:var(--ink); color:#cfd8e6; padding:7px 12px; font-size:12px;
+    display:flex; gap:8px; align-items:center;
+  }
+  .bar .dot{width:9px;height:9px;border-radius:50%;background:#4a586f}
+  .body{padding:18px}
+  .row{display:flex; gap:12px; align-items:flex-start}
+  .col{flex:1}
+  /* primitives */
+  .field{margin:10px 0}
+  .lbl{font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--ink-soft); margin-bottom:4px; display:block}
+  .input{border:1.5px solid var(--line); border-radius:6px; padding:8px 10px; background:#fbfcfe; color:var(--ink-soft); min-height:18px}
+  .input.area{min-height:46px}
+  .input.ph{border-style:dashed; color:var(--dash); border-color:var(--dash)}
+  .btn{
+    display:inline-block; border:1.5px solid var(--line); border-radius:6px;
+    padding:8px 14px; background:var(--ink); color:#fff; font-size:13px; cursor:default;
+  }
+  .btn.sec{background:#fff; color:var(--ink)}
+  .btn.ai{background:var(--accent-soft); color:var(--accent); border-color:var(--accent)}
+  .btn.warn{background:var(--warn-soft); color:var(--warn); border-color:var(--warn)}
+  .btn.ok{background:var(--ok-soft); color:var(--ok); border-color:var(--ok)}
+  .btn.disabled{background:var(--grey-fill); color:var(--lock); border-color:var(--grey); border-style:dashed}
+  .btnrow{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px}
+  .chk{display:flex; gap:8px; align-items:center; margin:4px 0}
+  .box{width:15px;height:15px;border:1.5px solid var(--line);border-radius:3px;display:inline-block;flex:none;position:relative}
+  .box.on{background:var(--accent);border-color:var(--accent)}
+  .box.on::after{content:"✓";color:#fff;font-size:11px;position:absolute;top:-2px;left:2px}
+  .panel{border:1.5px solid var(--line); border-radius:8px; padding:12px; margin:12px 0}
+  .panel.grey{background:var(--grey-fill); border-style:dashed; border-color:var(--grey); color:var(--lock)}
+  .panel .ph-title{font-weight:600; font-size:13px; margin-bottom:8px}
+  .lockbadge{font-size:10px; background:var(--lock); color:#fff; padding:1px 6px; border-radius:9px; margin-left:6px; vertical-align:middle}
+  .tag{font-size:10px; background:var(--accent); color:#fff; padding:1px 6px; border-radius:9px; margin-left:6px}
+  table.t{width:100%; border-collapse:collapse; margin-top:6px; font-size:12px}
+  table.t th,table.t td{border:1px solid var(--grey); padding:6px 7px; text-align:left}
+  table.t th{background:var(--grey-fill); font-weight:600; color:var(--ink-soft)}
+  .preview{
+    border:1.5px dashed var(--dash); border-radius:6px; background:repeating-linear-gradient(45deg,#f4f6f9,#f4f6f9 7px,#eef1f5 7px,#eef1f5 14px);
+    height:96px; display:flex; align-items:center; justify-content:center;
+    color:var(--dash); font-size:11px; text-align:center; padding:4px;
+  }
+  .preview.sm{height:72px}
+  .pvrow{display:flex; gap:8px}
+  .pvrow .col{display:flex; flex-direction:column; gap:5px}
+  .cap{font-size:11px; text-align:center; color:var(--ink-soft)}
+  .hint{font-size:11px; color:var(--ink-soft); margin-top:5px; line-height:1.4; border-left:2px solid var(--accent-soft); padding-left:8px}
+  .hint .yes{color:var(--ok); font-weight:600}
+  .hint .no{color:var(--warn); font-weight:600}
+  /* annotation callouts */
+  .notes{margin-top:14px; border-left:3px solid var(--accent); padding:6px 0 6px 14px}
+  .notes h4{margin:0 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--accent)}
+  .notes ul{margin:0; padding-left:18px}
+  .notes li{margin:3px 0; font-size:12.5px; color:var(--ink)}
+  .notes li code{background:var(--grey-fill); padding:0 4px; border-radius:3px; font-size:11.5px}
+  .legend{display:flex; flex-wrap:wrap; gap:14px; padding:12px 16px; background:var(--card); border:1px solid var(--grey); border-radius:8px; margin-bottom:22px; font-size:12px}
+  .legend span{display:flex; gap:6px; align-items:center}
+  .sw{width:22px;height:14px;border-radius:3px;border:1.5px solid var(--line);flex:none}
+  .sw.real{background:#fbfcfe}
+  .sw.ph{border-style:dashed;border-color:var(--dash);background:repeating-linear-gradient(45deg,#f4f6f9,#f4f6f9 5px,#eef1f5 5px,#eef1f5 10px)}
+  .sw.grey{background:var(--grey-fill);border-style:dashed;border-color:var(--grey)}
+  .sw.ai{background:var(--accent-soft);border-color:var(--accent)}
+  .flowhint{font-size:12px;color:var(--ink-soft);margin:14px 0 0;padding-top:10px;border-top:1px dashed var(--grey)}
+  .flowhint b{color:var(--ink)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Генерация персонажей на банане — Wireframes интерфейса</h1>
+  <div class="sub">Лоу-фай схема окон под ТЗ <code>proekt_zametki.md</code> / задача <code>HLE-661</code>. Не финальный дизайн — раскладка блоков, состояния и поведение. Стек реализации: Gradio.</div>
+</header>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="wrap">
+  <div class="legend">
+    <span><i class="sw real"></i> реальный элемент</span>
+    <span><i class="sw ph"></i> плейсхолдер/превью</span>
+    <span><i class="sw grey"></i> неактивно (серый, disabled)</span>
+    <span><i class="sw ai"></i> платный вызов LLM</span>
+    <span><i class="box on" style="position:static"></i> галочка вкл</span>
+    <span><span class="lockbadge">заморожено</span> залочено после утверждения</span>
+  </div>
+
+  <!-- ============ 1. START ============ -->
+  <section class="screen" data-name="1. Стартовый">
+    <h2>Окно 1 — Стартовый экран</h2>
+    <p class="ctx">Вход в приложение. Новый персонаж из текста ИЛИ открыть сохранённого. См. §5 «Список сохранённых персонажей».</p>
+    <div class="device">
+      <div class="bar"><span class="dot"></span> Генерация персонажей</div>
+      <div class="body">
+        <div class="field">
+          <span class="lbl">Текст произведения</span>
+          <div class="input area ph">вставьте текст или загрузите файл…</div>
+        </div>
+        <div class="btnrow">
+          <span class="btn">Извлечь персонажей (LLM)</span>
+        </div>
+        <div class="panel">
+          <div class="ph-title">Сохранённые персонажи <span class="tag">из бакета</span></div>
+          <table class="t">
+            <tr><th>Имя</th><th>Статус</th><th></th></tr>
+            <tr><td>Конан</td><td>пайп не завершён</td><td><span class="btn sec" style="padding:3px 9px">Открыть</span></td></tr>
+            <tr><td>Луций</td><td>готов</td><td><span class="btn sec" style="padding:3px 9px">Открыть</span></td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <h4>Поведение</h4>
+      <ul>
+        <li><b>Извлечь персонажей</b> → LLM достаёт список имён → переход на экран данных нового персонажа.</li>
+        <li>Клик <b>Открыть</b> → читаем <code>state.json</code>, автозаполняем все формы.</li>
+        <li>Если <code>current_step</code> не пуст → прыжок на последний шаг; если пуст (пайп завершён) → первая страница.</li>
+        <li>Перед извлечением должен быть утверждён <b>STYLE</b> (шаг 0, загрузка ~5 фото стиля). Если нет — сначала туда.</li>
+      </ul>
+    </div>
+    <p class="flowhint"><b>Дальше:</b> Окно 2 (данные персонажа).</p>
+  </section>
+
+  <!-- ============ 2. CHARACTER DATA ============ -->
+  <section class="screen" data-name="2. Данные персонажа">
+    <h2>Окно 2 — Экран данных персонажа</h2>
+    <p class="ctx">Таблица данных + блок «Эмоции» + «Базовая эмоция» + «Дополнительные наряды». Всё опциональное под галочками. См. §5.</p>
+    <div class="device">
+      <div class="bar"><span class="dot"></span> Персонаж: Конан · данные</div>
+      <div class="body">
+        <div class="field">
+          <span class="lbl">Таблица персонажа</span>
+          <table class="t">
+            <tr><th>Поле</th><th>Значение</th></tr>
+            <tr><td>Пол / возраст</td><td>муж / ~30</td></tr>
+            <tr><td>Телосложение</td><td>атлетическое, мощное</td></tr>
+            <tr><td>Волосы / глаза</td><td>чёрные до плеч / синие</td></tr>
+            <tr><td>Приметы</td><td>шрам на левой щеке</td></tr>
+          </table>
+        </div>
+
+        <div class="panel grey">
+          <div class="ph-title" style="color:var(--ink)">Базовый наряд <span class="tag">часть данных · read-only</span></div>
+          <div class="field" style="margin:4px 0">
+            <span class="lbl">вводится на шаге паспорта, морозится после фас-рост</span>
+            <div class="input" style="color:var(--lock)">dark fur-trimmed leather tunic <span class="lockbadge">read-only</span></div>
+            <div class="hint">содержит только одежду/крой базового наряда. Эмоция, поза, фон, анатомия — в своих слоях.</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="chk"><i class="box on"></i> <b>Эмоции</b> <span class="tag">опц.</span></div>
+          <table class="t">
+            <tr><th>Эмоция</th><th>Референс</th></tr>
+            <tr><td>neutral</td><td><span class="mono" style="color:var(--ok)">refs/emo_neutral.png</span></td></tr>
+            <tr><td>angry, furious</td><td><span class="mono" style="color:var(--dash)">—</span></td></tr>
+            <tr><td>smiling warmly</td><td><span class="mono" style="color:var(--dash)">—</span></td></tr>
+          </table>
+          <div class="chk" style="margin-top:10px"><i class="box on"></i> Базовая эмоция персонажа</div>
+          <div class="field" style="margin:4px 0 0">
+            <div class="row">
+              <div class="input col" style="color:var(--ink)">grim, brooding</div>
+              <span class="btn sec" style="padding:8px 11px">…</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="chk"><i class="box on"></i> <b>Дополнительные наряды</b> <span class="tag">опц. · сверх базового</span></div>
+          <table class="t">
+            <tr><th>Промт наряда</th><th>Референсы</th><th>Сложный</th><th></th></tr>
+            <tr><td>парадный доспех</td><td class="mono" style="font-size:10px">front, back, profile</td><td><i class="box on" style="position:static"></i></td><td><span class="btn sec" style="padding:2px 8px">✎</span></td></tr>
+            <tr><td colspan="4" style="text-align:center;color:var(--accent)">+ добавить наряд</td></tr>
+          </table>
+        </div>
+
+        <div class="panel">
+          <div class="chk"><i class="box on"></i> <b>Предметы</b> <span class="tag">реквизит / магия · опц.</span></div>
+          <table class="t">
+            <tr><th>Предмет / эффект</th><th>Кадры (1–3)</th><th></th></tr>
+            <tr><td>Меч «Атлантида»</td><td class="mono" style="font-size:10px">prop1_a, prop1_b</td><td><span class="btn sec" style="padding:2px 8px">✎</span></td></tr>
+            <tr><td>Огненный каст (эффект)</td><td class="mono" style="font-size:10px">prop2_a</td><td><span class="btn sec" style="padding:2px 8px">✎</span></td></tr>
+            <tr><td colspan="3" style="text-align:center;color:var(--accent)">+ добавить предмет</td></tr>
+          </table>
+        </div>
+
+        <div class="btnrow"><span class="btn">Далее → паспорт</span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <h4>Поведение</h4>
+      <ul>
+        <li>Галочка выкл → весь блок <b>серый и неактивный</b> (disabled). Вкл → активен.</li>
+        <li>Колонка «Референс» в эмоциях и колонка «Референсы» в нарядах заполняются по мере генерации.</li>
+        <li><b>Базовая эмоция</b>: поле + кнопка «…» (пресеты). Подставляется вместо neutral везде, кроме паспорта.</li>
+        <li>Наряд <code>base</code> — нулевая запись, не редактируется здесь (задаётся на паспорте, морозится с BODY).</li>
+        <li>Порядок фаз: <b>паспорт → [эмоции] → [наряды] → [предметы] → датасет</b>.</li>
+      </ul>
+    </div>
+    <p class="flowhint"><b>Дальше:</b> Окно 3 (шаг паспорта).</p>
+  </section>
+
+  <!-- ============ 3. PASSPORT STEP ============ -->
+  <section class="screen" data-name="3. Шаг паспорта">
+    <h2>Окно 3 — Шаг паспорта (единая форма шага)</h2>
+    <p class="ctx">5 кадров пошагово: фас-портрет → фас-рост → профиль → спина → 3/4. Своё предупреждение/критерий на каждом. 3 ИИ-кнопки. См. §5 «Паспортные кадры».</p>
+    <div class="device">
+      <div class="bar"><span class="dot"></span> ШАГ 1 / 5 · Фас-портрет</div>
+      <div class="body">
+        <div class="panel" style="border-color:var(--warn);background:var(--warn-soft)">
+          <b>Это базовый кадр идентичности.</b> Критерий: чёткий фас, лицо прямо в камеру, head&amp;shoulders, нейтраль, серый фон, без рамок/надписей.
+        </div>
+        <div class="field">
+          <span class="lbl">[FACE] — только анатомия</span>
+          <div class="input area" style="color:var(--ink)">oval face, high cheekbones, straight nose, blue eyes, black shoulder-length hair, scar on left cheek</div>
+          <div class="hint"><span class="yes">писать:</span> форма лица, нос, губы, глаза, волосы, кожа, шрамы/тату. <span class="no">не писать:</span> выражение лица/эмоцию (→ EXPRESSION), позу/фон (→ COMPOSITION), одежду (→ OUTFIT).</div>
+        </div>
+        <div class="field">
+          <span class="lbl">[OUTFIT] — базовый наряд (ВВОД здесь, плечи в кадре; докрутка на фас-рост)</span>
+          <div class="input" style="color:var(--ink)">dark fur-trimmed leather tunic</div>
+          <div class="hint"><span class="yes">писать:</span> одежду, материал, крой, цвет наряда. <span class="no">не писать:</span> телосложение (→ BODY), лицо (→ FACE), позу/фон (→ COMPOSITION), эмоцию (→ EXPRESSION).</div>
+        </div>
+        <div class="pvrow"><div class="col"><div class="preview">превью кадра</div></div></div>
+        <div class="btnrow">
+          <span class="btn ai">Проверить с ИИ</span>
+          <span class="btn ai">Правка с ИИ</span>
+          <span class="btn">Сгенерировать</span>
+        </div>
+        <div class="btnrow">
+          <span class="btn sec">← Назад</span>
+          <span class="btn ok">Утвердить</span>
+          <span class="btn sec disabled">Вперёд →</span>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <h4>Поведение</h4>
+      <ul>
+        <li>Шаг 1 крутит <b>[FACE]</b> → утвердил → <code>FACE</code> заморожен, кадр = реф лица.</li>
+        <li>Шаг 2 (фас-рост) крутит <b>[BODY]</b>, лицо держит реф → утвердил → <code>BODY</code> заморожен, и базовый наряд (введённый на экране данных) тоже морозится здесь.</li>
+        <li>Шаги 3–5 (профиль/спина/3/4): поле OUTFIT <b>read-only серым</b>, EXPRESSION принудительно neutral.</li>
+        <li><b>Проверить с ИИ</b> — 1 слой/кадр; <b>Правка с ИИ</b> — весь персонаж, ставит <code>need_regen</code>.</li>
+        <li>Вход в шаг: если раньше есть шаг с <code>need_regen</code> — прыжок туда. «Вперёд» активна только если есть данные след. шага.</li>
+        <li>Гейт: все 5 утверждены → следующая фаза.</li>
+      </ul>
+    </div>
+    <p class="flowhint"><b>Дальше:</b> Окно 4 (эмоции, если вкл) → Окно 5 (наряды, если вкл) → Окно 6 (датасет).</p>
+  </section>
+
+  <!-- ============ 4. EMOTIONS ============ -->
+  <section class="screen" data-name="4. Эмоции">
+    <h2>Окно 4 — Экран генерации эмоций</h2>
+    <p class="ctx">Фаза после паспорта (если блок включён). Портретный кадр на эмоцию. Рефы опциональны. См. §5 «Экран генерации эмоций».</p>
+    <div class="device">
+      <div class="bar"><span class="dot"></span> Конан · эмоции</div>
+      <div class="body">
+        <span class="lbl">Базовые эмоции — генерация по одной</span>
+        <div class="pvrow">
+          <div class="col"><div class="cap">neutral</div><div class="preview sm">превью</div><span class="btn sec" style="padding:4px 0;text-align:center">Сгенерировать</span></div>
+          <div class="col"><div class="cap">angry, furious</div><div class="preview sm">превью</div><span class="btn sec" style="padding:4px 0;text-align:center">Сгенерировать</span></div>
+          <div class="col"><div class="cap">smiling warmly</div><div class="preview sm">превью</div><span class="btn sec" style="padding:4px 0;text-align:center">Сгенерировать</span></div>
+        </div>
+        <div class="panel" style="margin-top:14px">
+          <div class="chk"><i class="box on"></i> <b>Базовая эмоция</b> (синк с данными персонажа)</div>
+          <div class="field" style="margin:6px 0 0">
+            <span class="lbl">промт эмоции — короткое выражение</span>
+            <div class="row">
+              <div class="col">
+                <div class="input" style="color:var(--ink)">grim, brooding</div>
+              </div>
+              <div style="width:120px"><div class="preview sm" style="height:58px">превью</div></div>
+            </div>
+            <div class="hint"><span class="yes">писать:</span> короткое выражение по-английски (grim, smiling, furious). <span class="no">не писать:</span> описание мимики прозой, позу/одежду/фон.</div>
+            <div class="btnrow"><span class="btn sec">Сгенерировать</span> <span class="btn ai">Проверить с ИИ</span></div>
+          </div>
+        </div>
+        <div class="btnrow"><span class="btn ok">Утвердить</span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <h4>Поведение</h4>
+      <ul>
+        <li>Кадр — <b>фас-портрет</b>. Промт: STYLE+FACE+BODY+OUTFIT(базовый)+EXPRESSION(эта эмоция)+портрет. Рефы: <b>лицо+тело+стиль</b>.</li>
+        <li>Кнопка под <b>каждым</b> превью — генерит только свою эмоцию (точечная перегенерация).</li>
+        <li>Базовая эмоция: EXPRESSION = её значение, реф → <code>base_emotion.ref</code>.</li>
+        <li><b>Утвердить</b>: рефы опциональны — если есть пустые, диалог «перейти как есть / догенерить». Переход разрешён.</li>
+      </ul>
+    </div>
+    <p class="flowhint"><b>Дальше:</b> Окно 5 (наряды) или Окно 6 (датасет).</p>
+  </section>
+
+  <!-- ============ 5. OUTFIT STEP ============ -->
+  <section class="screen" data-name="5. Шаг наряда">
+    <h2>Окно 5 — Шаг генерации наряда</h2>
+    <p class="ctx">По строке наряда — свой шаг. Простой = 2 сцены, сложный = +профиль и блок деталей. См. §5 «Дополнительные наряды».</p>
+    <div class="device">
+      <div class="bar"><span class="dot"></span> Конан · наряд «парадный доспех»</div>
+      <div class="body">
+        <div class="field">
+          <span class="lbl">[OUTFIT] — промт наряда</span>
+          <div class="input area" style="color:var(--ink)">ornate ceremonial plate armor, engraved pauldrons, crimson cloak</div>
+          <div class="hint"><span class="yes">писать:</span> одежду, доспех, материал, крой, цвет. <span class="no">не писать:</span> телосложение (→ BODY), лицо/эмоцию, позу/ракурс/фон (→ COMPOSITION).</div>
+          <div class="cap" style="text-align:left;color:var(--warn);margin-top:4px">⚠ важно получить ПОЛНЫЙ РОСТ без обрезок</div>
+        </div>
+        <div class="chk"><i class="box on"></i> Сложный наряд</div>
+        <span class="lbl" style="margin-top:8px">Сцены наряда</span>
+        <div class="pvrow">
+          <div class="col"><div class="cap">фас рост</div><div class="preview sm">превью</div><div class="chk" style="justify-content:center"><i class="box on" style="position:static"></i> утв.</div></div>
+          <div class="col"><div class="cap">сзади рост</div><div class="preview sm">превью</div><div class="chk" style="justify-content:center"><i class="box" style="position:static"></i> утв.</div></div>
+          <div class="col"><div class="cap">профиль рост</div><div class="preview sm">превью</div><div class="chk" style="justify-content:center"><i class="box" style="position:static"></i> утв.</div></div>
+        </div>
+        <div class="btnrow"><span class="btn sec">Сгенерировать сцены</span> <span class="btn ai">Проверить с ИИ</span></div>
+
+        <div class="panel" style="margin-top:14px">
+          <div class="ph-title">Деталь костюма <span class="tag">крупный план</span></div>
+          <div class="cap" style="text-align:left;margin-bottom:6px">макро на детали; без лица/тела — только стиль + реф наряда + слой OUTFIT</div>
+          <div class="row">
+            <div class="col"><div class="input" style="color:var(--ink)">close-up of engraved pauldron</div></div>
+            <div style="width:110px"><div class="preview sm" style="height:54px">превью</div></div>
+          </div>
+          <div class="hint"><span class="yes">писать:</span> что за деталь крупным планом (гравировка, пряжка, узор). <span class="no">не писать:</span> лицо/тело персонажа, позу, фон.</div>
+          <div class="btnrow"><span class="btn sec">Сгенерировать</span> <span class="btn ai">Проверить с ИИ</span> <span class="btn warn">Удалить</span></div>
+          <div class="cap" style="text-align:center;color:var(--accent);margin-top:8px">+ добавить деталь</div>
+        </div>
+
+        <div class="btnrow"><span class="btn ok">Согласовать наряд</span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <h4>Поведение</h4>
+      <ul>
+        <li>Первая генерация делает сразу: <b>фас-рост + сзади-рост</b> (+ <b>профиль-рост</b> если «Сложный»).</li>
+        <li>Галочка «утв.» — только чтобы перегенерация не трогала утверждённые сцены (не для разблокировки кнопки).</li>
+        <li><b>Согласовать наряд</b> заблокирована, пока нет генераций всех обязательных сцен (фас+сзади, +профиль для сложного).</li>
+        <li>Деталь опциональна; генерится без идентичности. «Удалить» с генерацией → «Вы уверены?». Можно несколько деталей.</li>
+        <li>Висит деталь с промтом без генерации при уходе → диалог «уйти и удалить / остаться».</li>
+        <li>Выключил «Сложный» после профиля → реф профиля <b>прячем, не удаляем</b>.</li>
+        <li>При согласовании: последние генерации → утверждённые рефы, <b>все промты + флаги</b> в <code>state</code>.</li>
+      </ul>
+    </div>
+    <p class="flowhint"><b>Дальше:</b> следующий наряд или Окно 6 (датасет).</p>
+  </section>
+
+  <!-- ============ 6b. PROPS STEP ============ -->
+  <section class="screen" data-name="6. Шаг предмета">
+    <h2>Окно 6 — Шаг генерации предмета</h2>
+    <p class="ctx">Реквизит и магия, привязаны к персонажу. По строке предмета — свой шаг. 1 кадр по умолчанию, до 3. Генерация без персонажа. См. §5 «Предметы (PROPS)».</p>
+    <div class="device">
+      <div class="bar"><span class="dot"></span> Конан · предмет «Меч Атлантида»</div>
+      <div class="body">
+        <div class="panel">
+          <div class="ph-title">Кадр 1</div>
+          <div class="field" style="margin:4px 0">
+            <span class="lbl">что это (описание от пользователя)</span>
+            <div class="input" style="color:var(--ink)">общий вид меча, клинок целиком</div>
+          </div>
+          <div class="field" style="margin:4px 0">
+            <span class="lbl">промт кадра</span>
+            <div class="input area" style="color:var(--ink)">ancient bronze longsword, ornate hilt, runic engravings on blade, product shot, plain neutral background</div>
+            <div class="hint"><span class="yes">писать:</span> предмет/эффект, материал, форма, product-shot, чистый фон. <span class="no">не писать:</span> персонажа (лицо/тело/руки), сцену, кто держит.</div>
+          </div>
+          <div class="row">
+            <div class="col"><div class="preview sm">превью предмета</div></div>
+          </div>
+          <div class="btnrow"><span class="btn sec">Сгенерировать</span> <span class="btn ai">Проверить с ИИ</span> <span class="btn warn">Удалить</span></div>
+        </div>
+        <div class="panel">
+          <div class="ph-title">Кадр 2 <span class="tag">2 / 3</span></div>
+          <div class="field" style="margin:4px 0">
+            <span class="lbl">что это</span>
+            <div class="input" style="color:var(--ink)">крупный план рукояти и руны</div>
+          </div>
+          <div class="field" style="margin:4px 0">
+            <span class="lbl">промт кадра</span>
+            <div class="input ph">close-up of hilt…</div>
+            <div class="hint"><span class="yes">писать:</span> предмет/эффект, ракурс детали, product-shot, чистый фон. <span class="no">не писать:</span> персонажа, сцену.</div>
+          </div>
+          <div class="row"><div class="col"><div class="preview sm">не сгенерён</div></div></div>
+          <div class="btnrow"><span class="btn sec">Сгенерировать</span> <span class="btn ai">Проверить с ИИ</span> <span class="btn warn">Удалить</span></div>
+        </div>
+        <div class="cap" style="text-align:center;color:var(--accent)">+ добавить кадр (доступно, пока кадров &lt; 3)</div>
+        <div class="btnrow" style="margin-top:12px"><span class="btn">Далее →</span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <h4>Поведение</h4>
+      <ul>
+        <li>Произвольное число предметов на персонажа; <b>1–3 кадра</b> на предмет.</li>
+        <li>Генерация <b>без персонажа</b>: промт = STYLE-слой + промт кадра, реф <b>только стиль</b>. Без FACE/BODY/OUTFIT/EXPRESSION.</li>
+        <li>Каждый кадр: своё поле <b>«что это»</b> + промт + превью. Промты сохраняются даже без генерации.</li>
+        <li><b>Магия/эффекты</b> — здесь же (промт описывает эффект, не объект).</li>
+        <li>Кнопка «добавить кадр» гаснет на 3-м кадре.</li>
+      </ul>
+    </div>
+    <p class="flowhint"><b>Дальше:</b> следующий предмет или Окно 7 (датасет).</p>
+  </section>
+
+  <!-- ============ 7. DATASET ============ -->
+  <section class="screen" data-name="7. Датасет">
+    <h2>Окно 7 — Фаза датасета (массив композиций)</h2>
+    <p class="ctx">Финальная фаза: проход по сохранённому массиву композиций, авто-генерация + отбор. См. §4 (флоу) и §5.</p>
+    <div class="device">
+      <div class="bar"><span class="dot"></span> Конан · датасет · композиция 4/12</div>
+      <div class="body">
+        <div class="preview" style="height:150px">превью кадра композиции</div>
+        <div class="field" style="margin-top:12px">
+          <span class="lbl">[COMPOSITION] — поза + ракурс + кадр + фон</span>
+          <div class="input area" style="color:var(--ink)">walking pose, three-quarter angle, full body, tavern interior background</div>
+          <div class="hint"><span class="yes">писать:</span> позу, ракурс, план кадра, фон/локацию. <span class="no">не писать:</span> лицо/телосложение (держат рефы), одежду (→ активный OUTFIT), эмоцию (→ EXPRESSION).</div>
+          <div class="cap" style="text-align:left;color:var(--ink-soft);margin-top:4px">активный OUTFIT: парадный доспех · EXPRESSION: grim, brooding (базовая)</div>
+        </div>
+        <div class="btnrow">
+          <span class="btn ai">проверка llm</span>
+          <span class="btn sec">Перегенерить</span>
+        </div>
+        <div class="btnrow">
+          <span class="btn ok">Утвердить → approved/</span>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <h4>Поведение</h4>
+      <ul>
+        <li>Авто-генерация по текущей композиции массива + активный OUTFIT + базовая эмоция.</li>
+        <li><b>проверка llm</b> сверяет картинку против промта (формат <code>{обоснование}[промт]</code>).</li>
+        <li>Утвердил → <code>approved/</code> (имя по композиции). Кнопки «Отклонить» нет.</li>
+        <li>При <b>перегенерации</b> предыдущая генерация НЕ теряется — уходит в <code>rejected/</code> (+ № попытки). Отклонённые НИКОГДА не удаляются (вдруг пригодятся для датасета).</li>
+        <li>Рандомный фон: хардкод-массив + <code>random.choice()</code> + поле override.</li>
+        <li>Массив закончился → завершение: <code>current_step → null</code>, финальный архив.</li>
+      </ul>
+    </div>
+    <p class="flowhint"><b>Готово:</b> архив с семплами (approved/ + rejected/).</p>
+  </section>
+
+</div>
+
+<script>
+  const screens=[...document.querySelectorAll('.screen')];
+  const tabs=document.getElementById('tabs');
+  screens.forEach((s,i)=>{
+    const b=document.createElement('div');
+    b.className='tab'+(i===0?' active':'');
+    b.textContent=s.dataset.name;
+    b.onclick=()=>{
+      document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+      screens.forEach(x=>x.classList.remove('active'));
+      b.classList.add('active'); s.classList.add('active');
+      window.scrollTo({top:0,behavior:'smooth'});
+    };
+    tabs.appendChild(b);
+  });
+  screens[0].classList.add('active');
+</script>
+</body>
+</html>
