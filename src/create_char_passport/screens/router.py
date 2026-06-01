@@ -73,6 +73,9 @@ class WizardSession:
     # Stable path to the approved STYLE reference image (a persisted copy), so a
     # second character picked in the same session also gets the style ref attached.
     style_image_path: str = ""
+    # Transient UI flag: the emotions phase offers a "skip with an incomplete set"
+    # button after Approve finds ungenerated emotions (the phase allows it, §5).
+    emotions_offer_skip: bool = False
     notice: str = ""
     # Running API spend for the whole session (incl. pre-character calls like
     # extraction); the per-character figure lives on ``character.cost``.

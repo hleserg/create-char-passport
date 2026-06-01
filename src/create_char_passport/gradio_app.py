@@ -10,17 +10,21 @@ and every referenced callable is unit-tested elsewhere.
 
 from __future__ import annotations
 
+from functools import partial
+
 import gradio as gr
 
 from create_char_passport.screens import handlers
 from create_char_passport.screens.router import SCREEN_ORDER, ScreenId, WizardSession
 from create_char_passport.screens.views import (
     CHAR_DATA_REFRESH_KEYS,
+    EMOTIONS_REFRESH_KEYS,
     PASSPORT_REFRESH_KEYS,
     ScreenHandle,
     build_screens,
     char_data_refresh,
     cost_banner_text,
+    emotions_refresh,
     home_refresh,
     interactive_update,
     passport_refresh,
@@ -47,8 +51,10 @@ def _wire_home(home: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     # cursor (honouring the need_regen gate) and repaint that form too.
     c["open_saved_btn"].click(handlers.on_open_saved, [session, c["saved"]], [session]).then(
         handlers.on_enter_passport, [session], [session]
-    ).then(char_data_refresh, [session], ctx.char_data_outputs).then(
-        passport_refresh, [session], ctx.passport_outputs
+    ).then(handlers.on_enter_emotions, [session], [session]).then(
+        char_data_refresh, [session], ctx.char_data_outputs
+    ).then(passport_refresh, [session], ctx.passport_outputs).then(
+        emotions_refresh, [session], ctx.emotions_outputs
     ).then(screen_visibility, [session], ctx.containers).then(
         cost_banner_text, [session], [ctx.cost_banner]
     )
@@ -127,9 +133,52 @@ def _wire_passport(passport: ScreenHandle, session: gr.State, ctx: _Ctx) -> None
     ).then(char_data_refresh, [session], ctx.char_data_outputs).then(
         passport_refresh, [session], ctx.passport_outputs
     )
+    # Forward off the last frame can leave to the emotions phase — place its cursor
+    # and repaint that screen too.
     c["forward_btn"].click(handlers.on_passport_forward, [session], [session]).then(
+        handlers.on_enter_emotions, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(
+        passport_refresh, [session], ctx.passport_outputs
+    ).then(emotions_refresh, [session], ctx.emotions_outputs)
+
+
+def _wire_emotions(emotions: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
+    """Per-emotion point-wise generation + base-emotion block + approve/skip/back."""
+    c = emotions.components
+    # 3 point-wise emotion generators (index bound per button; handler is unit-tested).
+    for i in range(3):
+        c[f"emo_gen_{i}"].click(
+            partial(handlers.on_emotion_generate, index=i), [session], [session]
+        ).then(emotions_refresh, [session], ctx.emotions_outputs).then(
+            cost_banner_text, [session], [ctx.cost_banner]
+        )
+
+    # Base-emotion block: toggle + value + preset sync back to the character data
+    # (reuses the char-data base-emotion handler), then repaint to show/hide the block.
+    base_inputs = [session, c["base_emotion_enabled"], c["base_emotion_value"]]
+    c["base_emotion_enabled"].change(handlers.on_update_base_emotion, base_inputs, [session]).then(
+        emotions_refresh, [session], ctx.emotions_outputs
+    )
+    c["base_emotion_value"].blur(handlers.on_update_base_emotion, base_inputs, [session])
+    c["base_emotion_preset"].change(
+        value_for_label, [c["base_emotion_preset"]], [c["base_emotion_value"]]
+    ).then(handlers.on_update_base_emotion, base_inputs, [session])
+    c["base_emotion_gen"].click(handlers.on_base_emotion_generate, [session], [session]).then(
+        emotions_refresh, [session], ctx.emotions_outputs
+    ).then(cost_banner_text, [session], [ctx.cost_banner])
+
+    # Approve (offers skip on an incomplete set) / skip / back.
+    c["approve_btn"].click(handlers.on_emotions_approve, [session], [session]).then(
         screen_visibility, [session], ctx.containers
-    ).then(passport_refresh, [session], ctx.passport_outputs)
+    ).then(emotions_refresh, [session], ctx.emotions_outputs)
+    c["skip_btn"].click(handlers.on_emotions_skip, [session], [session]).then(
+        screen_visibility, [session], ctx.containers
+    ).then(emotions_refresh, [session], ctx.emotions_outputs)
+    c["back_btn"].click(handlers.on_emotions_back, [session], [session]).then(
+        screen_visibility, [session], ctx.containers
+    ).then(passport_refresh, [session], ctx.passport_outputs).then(
+        emotions_refresh, [session], ctx.emotions_outputs
+    )
 
 
 class _Ctx:
@@ -141,6 +190,8 @@ class _Ctx:
         self.char_data_outputs = [cd[key] for key in CHAR_DATA_REFRESH_KEYS]
         pp = handles[ScreenId.PASSPORT].components
         self.passport_outputs = [pp[key] for key in PASSPORT_REFRESH_KEYS]
+        em = handles[ScreenId.EMOTIONS].components
+        self.emotions_outputs = [em[key] for key in EMOTIONS_REFRESH_KEYS]
         self.cost_banner = cost_banner
 
 
@@ -169,6 +220,7 @@ def build_demo() -> gr.Blocks:
         _wire_style(handles[ScreenId.STYLE], session, ctx)
         _wire_char_data(handles[ScreenId.CHAR_DATA], session, ctx)
         _wire_passport(handles[ScreenId.PASSPORT], session, ctx)
+        _wire_emotions(handles[ScreenId.EMOTIONS], session, ctx)
 
         # Populate the saved-characters list + cost banner from the bucket on app
         # open, so a returning user sees their characters without a paid call.

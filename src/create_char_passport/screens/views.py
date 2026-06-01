@@ -38,6 +38,10 @@ from create_char_passport.wizard import (
     prop_rows,
     table_from_state,
 )
+from create_char_passport.wizard.emotions import (
+    BASE_EMOTION_DESCRIPTION,
+    BASE_EMOTION_HINT,
+)
 from create_char_passport.wizard.passport import (
     COMMON_CRITERIA,
     FACE_BODY_HINT,
@@ -315,12 +319,81 @@ def render_passport() -> ScreenHandle:
     )
 
 
+# Components refreshed when the emotions screen (re)renders, in fixed order.
+EMOTIONS_REFRESH_KEYS: tuple[str, ...] = (
+    "emo_label_0",
+    "emo_preview_0",
+    "emo_label_1",
+    "emo_preview_1",
+    "emo_label_2",
+    "emo_preview_2",
+    "base_emotion_enabled",
+    "base_emotion_value",
+    "base_emotion_block",
+    "base_emotion_preview",
+    "status",
+    "skip_btn",
+)
+
+# The emotions screen renders a fixed row of 3 cells (the default 3 base emotions).
+_EMOTION_CELLS: int = 3
+
+
 def render_emotions() -> ScreenHandle:
-    return _render_step(
-        ScreenId.EMOTIONS,
-        body="Emotions phase — 3 base emotions + optional base-emotion portrait.",
-        representative_step_key="base_emotion",
-        with_edit_slot=False,
+    """Emotions screen (window 4) — a row of 3 point-wise emotion portraits + base emotion."""
+    components: dict[str, Any] = {}
+    with gr.Group(visible=False) as group:
+        _heading(ScreenId.EMOTIONS, "Сгенерируй портрет для каждой эмоции (по кнопке под кадром).")
+        with gr.Row():
+            for i in range(_EMOTION_CELLS):
+                with gr.Column():
+                    components[f"emo_label_{i}"] = gr.Markdown(f"**эмоция {i + 1}**")
+                    components[f"emo_preview_{i}"] = gr.Image(
+                        label="Превью", interactive=False, type="filepath"
+                    )
+                    components[f"emo_gen_{i}"] = gr.Button(
+                        "Сгенерировать", elem_id=f"emotion-generate-{i}"
+                    )
+
+        components["base_emotion_enabled"] = gr.Checkbox(
+            label="Базовая эмоция персонажа", value=False
+        )
+        with gr.Group(visible=False) as base_block:
+            gr.Markdown(f"_{BASE_EMOTION_DESCRIPTION}_")
+            with gr.Row():
+                components["base_emotion_value"] = gr.Textbox(
+                    label="Базовая эмоция (короткое выражение, англ.)", interactive=True
+                )
+                components["base_emotion_preset"] = gr.Dropdown(
+                    label="… пресеты", choices=preset_labels(), interactive=True
+                )
+            gr.Markdown(f"_{BASE_EMOTION_HINT}_")
+            components["base_emotion_gen"] = gr.Button(
+                "Сгенерировать базовую эмоцию", elem_id="base-emotion-generate"
+            )
+            components["base_emotion_preview"] = gr.Image(
+                label="Превью базовой эмоции", interactive=False, type="filepath"
+            )
+            prompt = components["base_emotion_value"]
+            ai_check = build_ai_check_slot("base_emotion", prompt)
+        components["base_emotion_block"] = base_block
+
+        components["status"] = gr.Markdown("")
+        with gr.Row():
+            components["back_btn"] = gr.Button("← Назад", elem_id="emotions-back")
+            components["approve_btn"] = gr.Button(
+                "Утвердить", variant="primary", elem_id="emotions-approve"
+            )
+            components["skip_btn"] = gr.Button(
+                "Перейти как есть →", visible=False, elem_id="emotions-skip"
+            )
+    return ScreenHandle(
+        screen=ScreenId.EMOTIONS,
+        container=group,
+        prompt=prompt,
+        ai_check=ai_check,
+        ai_edit=None,
+        components=components,
     )
 
 
@@ -487,6 +560,44 @@ def passport_refresh(session: WizardSession) -> list[Any]:
         "forward_btn": gr.update(interactive=is_approved),
     }
     return [values[key] for key in PASSPORT_REFRESH_KEYS]
+
+
+def emotions_refresh(session: WizardSession) -> list[Any]:
+    """Updates for every emotions component, in :data:`EMOTIONS_REFRESH_KEYS` order.
+
+    Repaints the 3 emotion cells (label + preview from ``items[].ref``), the base
+    emotion block (shown only when enabled; value synced from the character) and
+    the "skip with incomplete set" button (shown after Approve finds gaps). No
+    character -> all no-op updates.
+    """
+    state = session.character
+    if state is None:
+        return [gr.update() for _ in EMOTIONS_REFRESH_KEYS]
+    items = state.emotions.items
+    base = state.emotions.base_emotion
+    values: dict[str, Any] = {}
+    for i in range(_EMOTION_CELLS):
+        item = items[i] if i < len(items) else None
+        preview: str | None = None
+        if item is not None and item.ref:
+            path = character_asset(state.character_id, item.ref)
+            if path.is_file():
+                preview = str(path)
+        values[f"emo_label_{i}"] = gr.update(value=f"**{item.value}**" if item else "")
+        values[f"emo_preview_{i}"] = gr.update(value=preview)
+
+    base_preview: str | None = None
+    if base.ref:
+        path = character_asset(state.character_id, base.ref)
+        if path.is_file():
+            base_preview = str(path)
+    values["base_emotion_enabled"] = gr.update(value=base.enabled)
+    values["base_emotion_value"] = gr.update(value=base.value, interactive=base.enabled)
+    values["base_emotion_block"] = gr.update(visible=base.enabled)
+    values["base_emotion_preview"] = gr.update(value=base_preview)
+    values["status"] = gr.update(value=session.notice or "")
+    values["skip_btn"] = gr.update(visible=session.emotions_offer_skip)
+    return [values[key] for key in EMOTIONS_REFRESH_KEYS]
 
 
 def interactive_update(enabled: bool) -> Any:
