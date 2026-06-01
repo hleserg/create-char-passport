@@ -64,8 +64,13 @@ generate_image(
     model=None,                                       # default: settings.image_model
 ) -> GenerationResult                                 # {image_path, ok, error}
 
-call_llm(prompt="…", image_b64=None, model=None) -> str   # default: settings.llm_model
+call_llm(prompt="…", image_b64=None, images_b64=None, model=None) -> str  # default: settings.llm_model
 ```
+
+> K2 extension (HLE-727, additive): `call_llm` gained the optional keyword
+> `images_b64: list[str] | None` for multi-image multimodal calls (the style
+> step sends ~5 reference photos at once). The single-image `image_b64` path is
+> unchanged; every image is sent ahead of the text part. No breaking change.
 
 Behaviour:
 
