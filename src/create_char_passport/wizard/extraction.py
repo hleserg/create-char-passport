@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from create_char_passport.gen import call_llm
 from create_char_passport.state import (
     CHARACTER_TABLE_KEYS,
+    CostLedger,
     coerce_value,
     normalize_character_table,
 )
@@ -150,14 +151,17 @@ def parse_extraction_response(raw: str) -> list[ExtractedCharacter]:
     return _names_fallback(raw)
 
 
-def extract_characters(text: str, *, model: str | None = None) -> list[ExtractedCharacter]:
+def extract_characters(
+    text: str, *, model: str | None = None, meter: CostLedger | None = None
+) -> list[ExtractedCharacter]:
     """Run the paid extraction call for ``text`` and parse the reply.
 
     Empty input short-circuits (no call). On any API failure ``call_llm``
     returns ``""`` which parses to an empty list — the caller surfaces a
-    "nothing found / try again" notice rather than an error.
+    "nothing found / try again" notice rather than an error. ``meter`` is
+    forwarded so the call's cost is attributed by the caller.
     """
     if not text or not text.strip():
         return []
-    raw = call_llm(build_extraction_prompt(text), model=model)
+    raw = call_llm(build_extraction_prompt(text), model=model, meter=meter)
     return parse_extraction_response(raw)

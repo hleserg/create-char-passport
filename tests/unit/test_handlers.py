@@ -37,7 +37,7 @@ def _session_with_extracted() -> WizardSession:
 # --------------------------------------------------------------------------- #
 def test_on_extract_populates_session(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        handlers, "extract_characters", lambda text: [ExtractedCharacter(name="Conan")]
+        handlers, "extract_characters", lambda text, meter=None: [ExtractedCharacter(name="Conan")]
     )
     session = handlers.on_extract(WizardSession(), "a story")
     assert [c.name for c in session.extracted_characters] == ["Conan"]
@@ -45,10 +45,23 @@ def test_on_extract_populates_session(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_on_extract_none_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(handlers, "extract_characters", lambda text: [])
+    monkeypatch.setattr(handlers, "extract_characters", lambda text, meter=None: [])
     session = handlers.on_extract(WizardSession(), "")
     assert session.extracted_characters == []
     assert "No characters" in session.notice
+
+
+def test_on_extract_accrues_session_cost(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_extract(text: str, meter: object = None) -> list[ExtractedCharacter]:
+        meter.llm_usd += 0.0021  # type: ignore[union-attr]
+        meter.llm_calls += 1  # type: ignore[union-attr]
+        return [ExtractedCharacter(name="Conan")]
+
+    monkeypatch.setattr(handlers, "extract_characters", fake_extract)
+    session = handlers.on_extract(WizardSession(), "a story")
+    # No character yet -> spend lands on the session ledger only.
+    assert session.cost.llm_calls == 1
+    assert session.cost.total_usd == pytest.approx(0.0021)
 
 
 def test_pick_extracted_goes_to_style_when_unapproved(bucket: Path) -> None:
@@ -119,9 +132,36 @@ def test_open_saved_character_helper(bucket: Path) -> None:
 # Style screen
 # --------------------------------------------------------------------------- #
 def test_on_draft_style_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(handlers, "draft_style_prompt", lambda paths: f"drafted:{len(paths)}")
-    assert handlers.on_draft_style(["a.png", "b.png"]) == "drafted:2"
-    assert handlers.on_draft_style(None) == "drafted:0"
+    monkeypatch.setattr(
+        handlers, "draft_style_prompt", lambda paths, meter=None: f"drafted:{len(paths)}"
+    )
+    _session, text = handlers.on_draft_style(WizardSession(), ["a.png", "b.png"])
+    assert text == "drafted:2"
+    _session2, text_none = handlers.on_draft_style(WizardSession(), None)
+    assert text_none == "drafted:0"
+
+
+def test_on_draft_style_bills_active_character(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = WizardSession()
+    session.character = blank_state("Conan")
+
+    def fake_draft(paths: list[str], meter: object = None) -> str:
+        meter.llm_usd += 0.005  # type: ignore[union-attr]
+        meter.llm_calls += 1  # type: ignore[union-attr]
+        return "inked comic"
+
+    monkeypatch.setattr(handlers, "draft_style_prompt", fake_draft)
+    out, _text = handlers.on_draft_style(session, ["a.png"])
+
+    assert out.character is not None
+    assert out.character.cost.total_usd == pytest.approx(0.005)
+    assert out.cost.total_usd == pytest.approx(0.005)
+    # Persisted to state.json so it survives a reopen.
+    saved = load_state("conan")
+    assert saved is not None
+    assert saved.cost.total_usd == pytest.approx(0.005)
 
 
 def test_approve_style_freezes_and_advances(bucket: Path) -> None:

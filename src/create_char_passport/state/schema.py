@@ -144,6 +144,34 @@ class StepRecord:
 
 
 @dataclass(slots=True)
+class CostLedger:
+    """Running API spend, in USD, split by call type (§7 "Стоимость").
+
+    Persisted on the character so the figure survives reopening a saved
+    character; an in-memory copy on the session aggregates the whole run
+    (including pre-character calls like extraction). Costs are list-price
+    estimates — see ``create_char_passport.gen.pricing``.
+    """
+
+    image_usd: float = 0.0
+    llm_usd: float = 0.0
+    image_calls: int = 0
+    llm_calls: int = 0
+
+    @property
+    def total_usd(self) -> float:
+        """Combined image + LLM spend."""
+        return self.image_usd + self.llm_usd
+
+    def merge(self, other: CostLedger) -> None:
+        """Fold another ledger's totals (a single action's spend) into this one."""
+        self.image_usd += other.image_usd
+        self.llm_usd += other.llm_usd
+        self.image_calls += other.image_calls
+        self.llm_calls += other.llm_calls
+
+
+@dataclass(slots=True)
 class CharacterState:
     """Root of ``state.json`` — full §6 schema."""
 
@@ -165,6 +193,8 @@ class CharacterState:
     # entry replaces the hardcoded scene preset for every future generation of
     # that scene (see ``create_char_passport.gen.scenes``). Empty by default.
     scene_overrides: dict[str, str] = field(default_factory=dict)
+    # Running API spend attributed to this character (image-gen + LLM).
+    cost: CostLedger = field(default_factory=CostLedger)
 
 
 def blank_state(name: str, character_id: str | None = None) -> CharacterState:
@@ -246,6 +276,17 @@ def _prop_entry(data: dict[str, Any]) -> PropEntry:
     )
 
 
+def _cost_ledger(data: dict[str, Any] | None) -> CostLedger:
+    if not data:
+        return CostLedger()
+    return CostLedger(
+        image_usd=float(data.get("image_usd", 0.0) or 0.0),
+        llm_usd=float(data.get("llm_usd", 0.0) or 0.0),
+        image_calls=int(data.get("image_calls", 0) or 0),
+        llm_calls=int(data.get("llm_calls", 0) or 0),
+    )
+
+
 def _step_record(data: dict[str, Any]) -> StepRecord:
     return StepRecord(
         last_path=data.get("last_path"),
@@ -276,4 +317,5 @@ def state_from_dict(data: dict[str, Any]) -> CharacterState:
         # possibly hand-edited file — keys/values are forced to the declared
         # ``dict[str, str]`` shape rather than trusting the JSON types.
         scene_overrides={str(k): str(v) for k, v in (data.get("scene_overrides") or {}).items()},
+        cost=_cost_ledger(data.get("cost")),
     )

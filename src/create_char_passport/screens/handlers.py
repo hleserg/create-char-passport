@@ -22,7 +22,7 @@ from create_char_passport.screens.router import (
     previous_screen,
     resume_screen,
 )
-from create_char_passport.state import CharacterState
+from create_char_passport.state import CharacterState, CostLedger
 from create_char_passport.storage import save_state
 from create_char_passport.wizard.extraction import ExtractedCharacter, extract_characters
 from create_char_passport.wizard.forms import apply_table as _apply_table
@@ -44,12 +44,27 @@ def _persist(session: WizardSession) -> None:
         save_state(session.character)
 
 
+def _attribute_cost(session: WizardSession, meter: CostLedger) -> None:
+    """Fold one action's spend into the session total and the active character.
+
+    The session ledger tracks the whole run (incl. pre-character calls like
+    extraction); the character ledger is persisted so its figure survives a
+    reopen. A spend-free meter is a cheap no-op.
+    """
+    session.cost.merge(meter)
+    if session.character is not None:
+        session.character.cost.merge(meter)
+        _persist(session)
+
+
 # --------------------------------------------------------------------------- #
 # Start screen
 # --------------------------------------------------------------------------- #
 def on_extract(session: WizardSession, text: str) -> WizardSession:
     """Run the paid extraction call and stash the results on the session."""
-    session.extracted_characters = list(extract_characters(text or ""))
+    meter = CostLedger()
+    session.extracted_characters = list(extract_characters(text or "", meter=meter))
+    _attribute_cost(session, meter)
     count = len(session.extracted_characters)
     session.notice = (
         f"Extracted {count} character(s)."
@@ -116,9 +131,19 @@ def open_saved_character(character_id: str) -> tuple[CharacterState, ScreenId] |
 # --------------------------------------------------------------------------- #
 # Style screen
 # --------------------------------------------------------------------------- #
-def on_draft_style(image_paths: list[str] | None) -> str:
-    """Draft a STYLE prompt from uploaded reference photos (paid multimodal call)."""
-    return draft_style_prompt(list(image_paths or []))
+def on_draft_style(
+    session: WizardSession, image_paths: list[str] | None
+) -> tuple[WizardSession, str]:
+    """Draft a STYLE prompt from reference photos (paid multimodal call) + bill it.
+
+    Returns ``(session, draft_text)`` so the running cost (attributed to the
+    active character + session total) rides back into ``gr.State`` alongside
+    the drafted prompt.
+    """
+    meter = CostLedger()
+    draft = draft_style_prompt(list(image_paths or []), meter=meter)
+    _attribute_cost(session, meter)
+    return session, draft
 
 
 def on_approve_style(session: WizardSession, style_text: str) -> WizardSession:

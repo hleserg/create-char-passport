@@ -19,6 +19,7 @@ from create_char_passport.screens.views import (
     ScreenHandle,
     build_screens,
     char_data_refresh,
+    cost_banner_text,
     home_refresh,
     interactive_update,
     screen_visibility,
@@ -34,24 +35,30 @@ def _wire_home(home: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     home_outputs = [c["notice"], c["extracted"], c["saved"]]
     c["extract_btn"].click(handlers.on_extract, [session, c["text"]], [session]).then(
         home_refresh, [session], home_outputs
-    )
+    ).then(cost_banner_text, [session], [ctx.cost_banner])
     c["open_extracted_btn"].click(
         handlers.on_pick_extracted, [session, c["extracted"]], [session]
     ).then(char_data_refresh, [session], ctx.char_data_outputs).then(
         screen_visibility, [session], ctx.containers
-    )
+    ).then(cost_banner_text, [session], [ctx.cost_banner])
     c["open_saved_btn"].click(handlers.on_open_saved, [session, c["saved"]], [session]).then(
         char_data_refresh, [session], ctx.char_data_outputs
-    ).then(screen_visibility, [session], ctx.containers)
+    ).then(screen_visibility, [session], ctx.containers).then(
+        cost_banner_text, [session], [ctx.cost_banner]
+    )
 
 
 def _wire_style(style: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     """Draft the style prompt and approve it (freezes STYLE, jumps to char-data)."""
     c = style.components
-    c["draft_btn"].click(handlers.on_draft_style, [c["images"]], [c["style_text"]])
+    c["draft_btn"].click(
+        handlers.on_draft_style, [session, c["images"]], [session, c["style_text"]]
+    ).then(cost_banner_text, [session], [ctx.cost_banner])
     c["approve_btn"].click(handlers.on_approve_style, [session, c["style_text"]], [session]).then(
         char_data_refresh, [session], ctx.char_data_outputs
-    ).then(screen_visibility, [session], ctx.containers)
+    ).then(screen_visibility, [session], ctx.containers).then(
+        cost_banner_text, [session], [ctx.cost_banner]
+    )
 
 
 def _wire_char_data(char_data: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
@@ -92,10 +99,11 @@ def _wire_char_data(char_data: ScreenHandle, session: gr.State, ctx: _Ctx) -> No
 class _Ctx:
     """Shared component references the per-screen wiring helpers need."""
 
-    def __init__(self, handles: dict[ScreenId, ScreenHandle]) -> None:
+    def __init__(self, handles: dict[ScreenId, ScreenHandle], cost_banner: gr.Markdown) -> None:
         self.containers = [handles[screen].container for screen in SCREEN_ORDER]
         cd = handles[ScreenId.CHAR_DATA].components
         self.char_data_outputs = [cd[key] for key in CHAR_DATA_REFRESH_KEYS]
+        self.cost_banner = cost_banner
 
 
 def build_demo() -> gr.Blocks:
@@ -107,6 +115,9 @@ def build_demo() -> gr.Blocks:
     """
     with gr.Blocks(title="Create Char Passport") as demo:
         gr.Markdown("# Create Char Passport")
+        # Global running-cost banner, visible on every screen (lives outside the
+        # per-screen groups). Refreshed after each cost- or character-changing event.
+        cost_banner = gr.Markdown(cost_banner_text(WizardSession()))
         session = gr.State(WizardSession())
         handles = build_screens()
         if set(handles.keys()) != set(SCREEN_ORDER):
@@ -114,17 +125,17 @@ def build_demo() -> gr.Blocks:
             msg = f"screens missing from build_screens(): {sorted(s.value for s in missing)}"
             raise RuntimeError(msg)
 
-        ctx = _Ctx(handles)
+        ctx = _Ctx(handles, cost_banner)
         home = handles[ScreenId.HOME]
         _wire_home(home, session, ctx)
         _wire_style(handles[ScreenId.STYLE], session, ctx)
         _wire_char_data(handles[ScreenId.CHAR_DATA], session, ctx)
 
-        # Populate the saved-characters list from the bucket on app open, so a
-        # returning user sees their characters without a paid extraction call.
+        # Populate the saved-characters list + cost banner from the bucket on app
+        # open, so a returning user sees their characters without a paid call.
         demo.load(
             home_refresh,
             [session],
             [home.components["notice"], home.components["extracted"], home.components["saved"]],
-        )
+        ).then(cost_banner_text, [session], [cost_banner])
     return demo

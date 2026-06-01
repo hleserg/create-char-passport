@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from create_char_passport.state import CharacterState, ordered_step_keys
+from create_char_passport.state import CharacterState, CostLedger, ordered_step_keys
 
 
 class ScreenId(StrEnum):
@@ -71,6 +71,9 @@ class WizardSession:
     style_approved: bool = False
     style_prompt: str = ""
     notice: str = ""
+    # Running API spend for the whole session (incl. pre-character calls like
+    # extraction); the per-character figure lives on ``character.cost``.
+    cost: CostLedger = field(default_factory=CostLedger)
     available_character_ids: list[str] = field(default_factory=list)
     # Characters extracted from the pasted text, awaiting the user's pick.
     # Typed ``Any`` to avoid a router -> wizard import cycle; holds

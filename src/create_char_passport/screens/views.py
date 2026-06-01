@@ -363,3 +363,23 @@ def update_table_fields(session: WizardSession, *field_values: str) -> WizardSes
 def interactive_update(enabled: bool) -> Any:
     """A single ``gr.update(interactive=...)`` — greys a block out when off."""
     return gr.update(interactive=bool(enabled))
+
+
+def _fmt_usd(amount: float) -> str:
+    return f"${amount:.4f}"
+
+
+def cost_banner_text(session: WizardSession) -> str:
+    """Markdown for the global running-cost banner shown on every screen.
+
+    Shows the active character's spend plus the session total (which also
+    covers pre-character calls like extraction). The figure is an estimate —
+    flagged with ``≈`` — because some image models are list-priced
+    approximately (see :mod:`create_char_passport.gen.pricing`).
+    """
+    session_total = _fmt_usd(session.cost.total_usd)
+    char = session.character
+    if char is None:
+        return f"💸 Сессия: ≈{session_total}"
+    name = char.name or char.character_id
+    return f"💸 Персонаж «{name}»: ≈{_fmt_usd(char.cost.total_usd)} · Сессия: ≈{session_total}"

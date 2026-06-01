@@ -17,7 +17,7 @@ import base64
 from pathlib import Path
 
 from create_char_passport.gen import call_llm
-from create_char_passport.state import CharacterState
+from create_char_passport.state import CharacterState, CostLedger
 
 STYLE_PROMPT: str = """\
 You are writing the STYLE layer of a prompt for a consistent character-reference
@@ -39,17 +39,20 @@ def _encode_image(path: str | Path) -> str:
     return base64.b64encode(Path(path).read_bytes()).decode("ascii")
 
 
-def draft_style_prompt(image_paths: list[str], *, model: str | None = None) -> str:
+def draft_style_prompt(
+    image_paths: list[str], *, model: str | None = None, meter: CostLedger | None = None
+) -> str:
     """Draft a STYLE-layer prompt from reference photos via one multimodal call.
 
     Empty input short-circuits (no call). On any API failure ``call_llm``
     returns ``""`` and the caller keeps the field editable for a retry.
+    ``meter`` is forwarded so the call's cost is attributed by the caller.
     """
     paths = [p for p in image_paths if p]
     if not paths:
         return ""
     images_b64 = [_encode_image(p) for p in paths]
-    return call_llm(STYLE_PROMPT, images_b64=images_b64, model=model).strip()
+    return call_llm(STYLE_PROMPT, images_b64=images_b64, model=model, meter=meter).strip()
 
 
 def apply_style(state: CharacterState, style_prompt: str) -> None:
