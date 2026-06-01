@@ -47,8 +47,15 @@ class Settings(BaseSettings):
     # Gemini API — required in production; empty string disables AI calls in dev
     gemini_api_key: str = ""
 
+    # Generation model ids (swappable without code changes — see plan/contracts.md K2).
+    image_model: str = "gemini-3.1-flash-image-preview"
+    llm_model: str = "gemini-2.5-flash"
+
     # HF Spaces / storage — name of the Hugging Face dataset repo used as the asset bucket
     hf_dataset_bucket: str = ""
+    # Local filesystem path where the HF Storage Bucket mounts in the Space
+    # (and a writable dev directory locally). All character folders live here.
+    bucket_path: str = "./data"
 
 
 @lru_cache(maxsize=1)
