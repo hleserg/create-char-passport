@@ -22,8 +22,18 @@ from create_char_passport.screens.router import (
     previous_screen,
     resume_screen,
 )
-from create_char_passport.state import CharacterState, CostLedger
+from create_char_passport.state import (
+    BASE_EMOTION_STEP,
+    CharacterState,
+    CostLedger,
+    emotion_step,
+)
 from create_char_passport.storage import character_asset, save_state
+from create_char_passport.wizard.emotions import (
+    generate_base_emotion,
+    generate_emotion,
+    missing_emotion_refs,
+)
 from create_char_passport.wizard.extraction import ExtractedCharacter, extract_characters
 from create_char_passport.wizard.forms import apply_table as _apply_table
 from create_char_passport.wizard.forms import (
@@ -409,6 +419,117 @@ def on_passport_forward(session: WizardSession) -> WizardSession:
         _persist(session)
     else:
         session.notice = "Сначала утвердите все 5 кадров."
+    return session
+
+
+# --------------------------------------------------------------------------- #
+# Emotions phase (optional) — a row of 3 point-wise portraits + base emotion
+# --------------------------------------------------------------------------- #
+def on_enter_emotions(session: WizardSession) -> WizardSession:
+    """Mark the emotions phase for resume and reset the skip offer.
+
+    Points ``current_step`` at an in-pipeline step so a reopen resumes here: the
+    first series emotion when the "Emotions" block is on, else the base emotion
+    (a base-only state has no ``emotion_<value>`` steps). No-op unless we are on
+    the emotions screen with a character.
+    """
+    state = session.character
+    if state is not None and session.current_screen is ScreenId.EMOTIONS:
+        session.emotions_offer_skip = False
+        if state.emotions.enabled and state.emotions.items:
+            state.current_step = emotion_step(state.emotions.items[0].value)
+        else:
+            state.current_step = BASE_EMOTION_STEP
+        session.notice = ""
+        _persist(session)
+    return session
+
+
+def on_emotion_generate(session: WizardSession, index: int) -> WizardSession:
+    """Generate one emotion portrait (point-wise) and bill the paid call."""
+    state = session.character
+    if state is None:
+        return session
+    meter = CostLedger()
+    try:
+        result = generate_emotion(state, index, meter=meter)
+    except IndexError:
+        return session
+    value = state.emotions.items[index].value
+    session.notice = (
+        f"Готова эмоция «{value}»."
+        if result.ok
+        else (result.error or "Не удалось сгенерировать. Попробуй ещё раз — промт сохранён.")
+    )
+    if result.ok and not missing_emotion_refs(state):
+        session.emotions_offer_skip = False  # set complete → drop the stale skip affordance
+    _attribute_cost(session, meter)
+    return session
+
+
+def on_base_emotion_generate(session: WizardSession) -> WizardSession:
+    """Generate the base-emotion portrait (only when the block is enabled)."""
+    state = session.character
+    if state is None:
+        return session
+    base = state.emotions.base_emotion
+    if not base.enabled:
+        session.notice = "Включи базовую эмоцию, чтобы её сгенерировать."
+        return session
+    if not base.value.strip():
+        # Blank value would resolve EXPRESSION to neutral (K3), silently storing a
+        # neutral portrait as the base emotion — the one frame that must NOT be neutral.
+        session.notice = "Введи выражение базовой эмоции, потом генерируй."
+        return session
+    meter = CostLedger()
+    result = generate_base_emotion(state, meter=meter)
+    session.notice = (
+        "Базовая эмоция готова."
+        if result.ok
+        else (result.error or "Не удалось сгенерировать. Попробуй ещё раз — промт сохранён.")
+    )
+    if result.ok and not missing_emotion_refs(state):
+        session.emotions_offer_skip = False  # set complete → drop the stale skip affordance
+    _attribute_cost(session, meter)
+    return session
+
+
+def on_emotions_approve(session: WizardSession) -> WizardSession:
+    """Leave the emotions phase; an incomplete set offers a "skip" instead (§5)."""
+    state = session.character
+    if state is None:
+        return session
+    missing = missing_emotion_refs(state)
+    if missing:
+        session.emotions_offer_skip = True
+        session.notice = (
+            "Не сгенерированы: "
+            + ", ".join(missing)
+            + ". Догенерируй или нажми «Перейти как есть →»."
+        )
+        return session
+    session.emotions_offer_skip = False
+    session.current_screen = next_screen(session)
+    _persist(session)
+    return session
+
+
+def on_emotions_skip(session: WizardSession) -> WizardSession:
+    """Proceed past the emotions phase with an incomplete reference set."""
+    state = session.character
+    if state is None:
+        return session
+    session.emotions_offer_skip = False
+    session.current_screen = next_screen(session)
+    _persist(session)
+    return session
+
+
+def on_emotions_back(session: WizardSession) -> WizardSession:
+    """Step back from the emotions phase (to the passport)."""
+    session.emotions_offer_skip = False
+    session.current_screen = previous_screen(session)
+    _persist(session)
     return session
 
 
