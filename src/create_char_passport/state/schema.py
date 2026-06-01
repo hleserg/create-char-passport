@@ -157,6 +157,9 @@ class CostLedger:
     llm_usd: float = 0.0
     image_calls: int = 0
     llm_calls: int = 0
+    # True once any call used an approximate / unknown list price, so the UI
+    # can honestly mark the total as an estimate ("≈") only when it really is.
+    has_estimate: bool = False
 
     @property
     def total_usd(self) -> float:
@@ -169,6 +172,7 @@ class CostLedger:
         self.llm_usd += other.llm_usd
         self.image_calls += other.image_calls
         self.llm_calls += other.llm_calls
+        self.has_estimate = self.has_estimate or other.has_estimate
 
 
 @dataclass(slots=True)
@@ -284,6 +288,7 @@ def _cost_ledger(data: dict[str, Any] | None) -> CostLedger:
         llm_usd=float(data.get("llm_usd", 0.0) or 0.0),
         image_calls=int(data.get("image_calls", 0) or 0),
         llm_calls=int(data.get("llm_calls", 0) or 0),
+        has_estimate=bool(data.get("has_estimate", False)),
     )
 
 

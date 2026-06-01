@@ -64,6 +64,27 @@ def test_on_extract_accrues_session_cost(monkeypatch: pytest.MonkeyPatch) -> Non
     assert session.cost.total_usd == pytest.approx(0.0021)
 
 
+def test_on_extract_does_not_bill_an_incidentally_loaded_character(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Extraction is cross-character — it must never inflate a loaded character."""
+
+    def fake_extract(text: str, meter: object = None) -> list[ExtractedCharacter]:
+        meter.llm_usd += 0.0021  # type: ignore[union-attr]
+        meter.llm_calls += 1  # type: ignore[union-attr]
+        return [ExtractedCharacter(name="Tyra")]
+
+    monkeypatch.setattr(handlers, "extract_characters", fake_extract)
+    session = WizardSession()
+    session.character = blank_state("Conan")  # a character happens to be loaded
+
+    session = handlers.on_extract(session, "a story")
+
+    assert session.cost.total_usd == pytest.approx(0.0021)  # session billed
+    assert session.character is not None
+    assert session.character.cost.total_usd == 0.0  # character NOT billed
+
+
 def test_pick_extracted_goes_to_style_when_unapproved(bucket: Path) -> None:
     session = _session_with_extracted()
     out = handlers.on_pick_extracted(session, "Conan")

@@ -128,3 +128,13 @@ def test_cost_banner_shows_character_and_session() -> None:
     assert "Персонаж «Conan»" in text
     assert "0.0500" in text  # character total
     assert "0.0600" in text  # session total
+
+
+def test_cost_banner_marks_estimate_only_when_approximate() -> None:
+    exact = WizardSession()
+    exact.cost.merge(CostLedger(llm_usd=0.01, llm_calls=1, has_estimate=False))
+    assert "≈" not in cost_banner_text(exact)  # exact prices -> no estimate mark
+
+    approx = WizardSession()
+    approx.cost.merge(CostLedger(image_usd=0.04, image_calls=1, has_estimate=True))
+    assert "≈" in cost_banner_text(approx)  # a preview/unknown price was used

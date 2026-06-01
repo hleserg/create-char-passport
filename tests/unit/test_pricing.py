@@ -78,10 +78,12 @@ def test_record_llm_and_image_mutate_ledger() -> None:
     record_llm(ledger, "gemini-2.5-flash", CallUsage(prompt_tokens=1_000_000, output_tokens=0))
     assert ledger.llm_calls == 1
     assert ledger.llm_usd == pytest.approx(0.30)
+    assert ledger.has_estimate is False  # exact list price
     record_image(ledger, "gemini-3-pro-image-preview")
     assert ledger.image_calls == 1
     assert ledger.image_usd == pytest.approx(0.13)
     assert ledger.total_usd == pytest.approx(0.43)
+    assert ledger.has_estimate is True  # preview model -> estimate
 
 
 def test_record_counts_call_even_when_unpriced() -> None:
@@ -89,6 +91,7 @@ def test_record_counts_call_even_when_unpriced() -> None:
     record_llm(ledger, "unknown-model", CallUsage(prompt_tokens=999))
     assert ledger.llm_calls == 1
     assert ledger.llm_usd == 0.0
+    assert ledger.has_estimate is True  # unknown model is treated as an estimate
 
 
 def test_price_table_has_documented_date_and_default_model() -> None:
@@ -99,16 +102,20 @@ def test_price_table_has_documented_date_and_default_model() -> None:
 
 def test_cost_ledger_merge_and_total() -> None:
     a = CostLedger(image_usd=0.10, llm_usd=0.20, image_calls=1, llm_calls=2)
-    a.merge(CostLedger(image_usd=0.05, llm_usd=0.0, image_calls=1, llm_calls=0))
+    a.merge(CostLedger(image_usd=0.05, llm_usd=0.0, image_calls=1, llm_calls=0, has_estimate=True))
     assert a.image_usd == pytest.approx(0.15)
     assert a.llm_usd == pytest.approx(0.20)
     assert (a.image_calls, a.llm_calls) == (2, 2)
     assert a.total_usd == pytest.approx(0.35)
+    assert a.has_estimate is True  # OR-ed in from the merged ledger
 
 
 def test_cost_ledger_survives_state_round_trip() -> None:
     state = blank_state("Conan")
-    state.cost.merge(CostLedger(image_usd=0.04, llm_usd=0.01, image_calls=1, llm_calls=1))
+    state.cost.merge(
+        CostLedger(image_usd=0.04, llm_usd=0.01, image_calls=1, llm_calls=1, has_estimate=True)
+    )
     restored = state_from_dict(state_to_dict(state))
     assert restored.cost.total_usd == pytest.approx(0.05)
     assert (restored.cost.image_calls, restored.cost.llm_calls) == (1, 1)
+    assert restored.cost.has_estimate is True

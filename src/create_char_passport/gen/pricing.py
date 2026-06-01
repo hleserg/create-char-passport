@@ -120,9 +120,11 @@ def record_llm(ledger: CostLedger, model: str, usage: CallUsage) -> None:
     """Add one LLM call's cost to ``ledger`` (count it even if the rate is 0)."""
     ledger.llm_usd += llm_cost(model, usage)
     ledger.llm_calls += 1
+    ledger.has_estimate = ledger.has_estimate or is_estimate(model)
 
 
 def record_image(ledger: CostLedger, model: str, images: int = 1) -> None:
     """Add one image-gen call's cost to ``ledger`` (count it even if the rate is 0)."""
     ledger.image_usd += image_cost(model, images)
     ledger.image_calls += 1
+    ledger.has_estimate = ledger.has_estimate or is_estimate(model)

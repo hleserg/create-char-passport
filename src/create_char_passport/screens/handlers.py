@@ -45,11 +45,14 @@ def _persist(session: WizardSession) -> None:
 
 
 def _attribute_cost(session: WizardSession, meter: CostLedger) -> None:
-    """Fold one action's spend into the session total and the active character.
+    """Bill a *character-specific* action to the session total + active character.
 
-    The session ledger tracks the whole run (incl. pre-character calls like
-    extraction); the character ledger is persisted so its figure survives a
-    reopen. A spend-free meter is a cheap no-op.
+    Use this only for calls made on behalf of the active character (e.g. style
+    drafting): the spend lands on both the session running total and the
+    character's persisted ledger (so it survives a reopen). Cross-character /
+    pre-character calls like extraction must NOT use this — they belong to the
+    session only (see :func:`on_extract`); otherwise an incidentally-loaded
+    character would be wrongly billed. A spend-free meter is a cheap no-op.
     """
     session.cost.merge(meter)
     if session.character is not None:
@@ -64,7 +67,9 @@ def on_extract(session: WizardSession, text: str) -> WizardSession:
     """Run the paid extraction call and stash the results on the session."""
     meter = CostLedger()
     session.extracted_characters = list(extract_characters(text or "", meter=meter))
-    _attribute_cost(session, meter)
+    # Extraction is a cross-character call — bill the session only, never an
+    # incidentally-loaded character (would inflate its persisted ledger).
+    session.cost.merge(meter)
     count = len(session.extracted_characters)
     session.notice = (
         f"Extracted {count} character(s)."
