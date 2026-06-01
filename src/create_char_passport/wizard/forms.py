@@ -43,9 +43,18 @@ BASE_OUTFIT_PLACEHOLDER: str = "(set on the passport step)"
 def character_from_extracted(
     extracted: ExtractedCharacter, *, style_prompt: str = ""
 ) -> CharacterState:
-    """Build a fresh character from an extracted draft (+ optional frozen style)."""
+    """Build a fresh character from an extracted draft (+ optional frozen style).
+
+    Seeds the layer-isolated draft prompts the extraction inferred —
+    ``prompt_layers.face`` / ``prompt_layers.body`` and ``base_outfit.prompt`` —
+    so the passport step opens pre-filled. These are drafts: fully editable, and
+    only frozen later on the passport step (the user is the source of truth).
+    """
     state = blank_state(extracted.name)
     state.character_table = normalize_character_table(extracted.table)
+    state.prompt_layers.face = extracted.face.strip()
+    state.prompt_layers.body = extracted.body.strip()
+    state.base_outfit.prompt = extracted.outfit.strip()
     if style_prompt.strip():
         apply_style(state, style_prompt)
     return state

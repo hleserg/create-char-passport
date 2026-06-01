@@ -41,15 +41,26 @@ Each element is one character (a person/creature that actually acts in the text)
   "skin":   "skin tone or null",
   "role":   "role / occupation / status (warrior, slave, noble) or null",
   "details":"other STABLE outward marks in one line: scars, tattoos, injuries,
-             distinctive features; null if none"
+             distinctive features; null if none",
+  "face":   "DRAFT [FACE] prompt — ENGLISH, anatomy ONLY: face shape, nose, lips,
+             eyes, hair, skin. NO expression/emotion, pose, clothing or background.
+             null if nothing",
+  "body":   "DRAFT [BODY] prompt — ENGLISH, build/proportions + STABLE marks under
+             clothing (scars, tattoos). NO clothing. null if nothing",
+  "outfit": "DRAFT base-outfit [OUTFIT] prompt — ENGLISH, clothing only: garments,
+             cut, material, colour. NO anatomy/pose/expression/background. null if nothing"
 }
 
 Rules:
 - Do NOT invent. If a trait is not in the text -> strictly null.
 - Do not confuse TEMPORARY things (a scene's clothing, pose, emotion) with a
   PERMANENT mark. In details put only stable outward features, not momentary ones.
+- face / body / outfit are short ENGLISH prompt drafts kept STRICTLY layer-isolated
+  (anatomy / physique / clothing) — the user refines and freezes them later. Never
+  put an expression or emotion in face; never put clothing in body; never put
+  anatomy, pose or background in outfit. null any draft not supported by the text.
 - Unnamed walk-on characters with no distinctive marks may be omitted.
-- Keep value language the same as the source text.
+- Keep table value language as in the source text; face/body/outfit drafts are ENGLISH.
 - The answer is the JSON array only.
 
 TEXT:
@@ -61,10 +72,18 @@ _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
 
 @dataclass(slots=True)
 class ExtractedCharacter:
-    """One extracted character — a name plus a (possibly empty) trait table."""
+    """One extracted character — a name, a trait table, and draft prompt layers.
+
+    ``face`` / ``body`` / ``outfit`` are layer-isolated English DRAFT prompts the
+    extraction may infer from the text; they seed ``prompt_layers.face/body`` and
+    ``base_outfit.prompt`` and are fully editable (frozen only on the passport step).
+    """
 
     name: str
     table: dict[str, str] = field(default_factory=dict)
+    face: str = ""
+    body: str = ""
+    outfit: str = ""
 
 
 def build_extraction_prompt(text: str) -> str:
@@ -93,7 +112,15 @@ def _from_json(raw: str) -> list[ExtractedCharacter] | None:
         if not name:
             continue
         table = normalize_character_table({k: item.get(k) for k in CHARACTER_TABLE_KEYS})
-        characters.append(ExtractedCharacter(name=name, table=table))
+        characters.append(
+            ExtractedCharacter(
+                name=name,
+                table=table,
+                face=coerce_value(item.get("face")),
+                body=coerce_value(item.get("body")),
+                outfit=coerce_value(item.get("outfit")),
+            )
+        )
     return characters
 
 

@@ -16,9 +16,13 @@ _CLEAN = """
 [
   {"name": "Conan", "gender": "male", "age": "around 30", "build": "powerful",
    "hair": "black, shoulder-length", "eyes": "blue", "skin": null,
-   "role": "warrior", "details": "scar on left cheek"},
+   "role": "warrior", "details": "scar on left cheek",
+   "face": "broad face, straight nose, blue eyes, black shoulder-length hair",
+   "body": "powerful, stocky build, scar on left forearm",
+   "outfit": "dark fur-trimmed leather tunic"},
   {"name": "the old fisherman", "gender": "male", "age": "old", "build": null,
-   "hair": null, "eyes": null, "skin": null, "role": "fisherman", "details": null}
+   "hair": null, "eyes": null, "skin": null, "role": "fisherman", "details": null,
+   "face": null, "body": null, "outfit": null}
 ]
 """
 
@@ -38,6 +42,21 @@ def test_parse_clean_json_maps_traits_and_nulls() -> None:
     assert conan.table["build"] == "powerful"
     assert conan.table["skin"] == ""  # JSON null -> ""
     assert chars[1].table["details"] == ""
+
+
+def test_parse_extracts_draft_layer_prompts() -> None:
+    conan, fisherman = parse_extraction_response(_CLEAN)
+    assert conan.face == "broad face, straight nose, blue eyes, black shoulder-length hair"
+    assert conan.body == "powerful, stocky build, scar on left forearm"
+    assert conan.outfit == "dark fur-trimmed leather tunic"
+    # null drafts collapse to "" (not the literal "null")
+    assert (fisherman.face, fisherman.body, fisherman.outfit) == ("", "", "")
+
+
+def test_parse_missing_draft_keys_default_empty() -> None:
+    # Older / partial replies without face/body/outfit must not break.
+    chars = parse_extraction_response('[{"name": "Tyra", "gender": "female"}]')
+    assert (chars[0].face, chars[0].body, chars[0].outfit) == ("", "", "")
 
 
 def test_parse_strips_markdown_fences() -> None:

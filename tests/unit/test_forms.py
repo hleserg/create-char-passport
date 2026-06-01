@@ -30,6 +30,9 @@ def _extracted() -> ExtractedCharacter:
     return ExtractedCharacter(
         name="Conan",
         table={"gender": "male", "build": "powerful", "skin": ""},
+        face="broad face, blue eyes, black hair",
+        body="powerful stocky build, scar on forearm",
+        outfit="dark fur-trimmed leather tunic",
     )
 
 
@@ -46,6 +49,20 @@ def test_character_from_extracted_seeds_table_and_style() -> None:
 def test_character_from_extracted_without_style() -> None:
     state = character_from_extracted(_extracted())
     assert state.prompt_layers.style == ""
+
+
+def test_character_from_extracted_seeds_draft_layers() -> None:
+    state = character_from_extracted(_extracted())
+    assert state.prompt_layers.face == "broad face, blue eyes, black hair"
+    assert state.prompt_layers.body == "powerful stocky build, scar on forearm"
+    assert state.base_outfit.prompt == "dark fur-trimmed leather tunic"
+
+
+def test_character_from_extracted_empty_drafts_stay_empty() -> None:
+    state = character_from_extracted(ExtractedCharacter(name="Tyra"))
+    assert state.prompt_layers.face == ""
+    assert state.prompt_layers.body == ""
+    assert state.base_outfit.prompt == ""
 
 
 def test_apply_table_user_is_truth() -> None:
