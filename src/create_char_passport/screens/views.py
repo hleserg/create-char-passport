@@ -146,10 +146,17 @@ def render_style() -> ScreenHandle:
     with gr.Group(visible=False) as group:
         _heading(
             ScreenId.STYLE,
-            "Upload ~5 style reference photos so the LLM can draft the STYLE prompt.",
+            "Upload 3–5 CLEAN single comic panels (no speech bubbles, no panel "
+            "borders) — the LLM drafts the STYLE prompt from them and the first "
+            "becomes the style reference image.",
         )
         components["images"] = gr.File(
-            label="Style reference photos", file_count="multiple", type="filepath"
+            label="Clean single-panel style references", file_count="multiple", type="filepath"
+        )
+        gr.Markdown(
+            "_Crop tight to one panel and remove text balloons. This same clean "
+            "panel anchors the style for both generation here and a future "
+            "style-LoRA, so they stay coherent (HLE-802)._"
         )
         components["draft_btn"] = gr.Button("Draft style prompt (LLM)", variant="primary")
         components["style_text"] = gr.Textbox(
@@ -812,6 +819,12 @@ def render_finish() -> ScreenHandle:
         components["finish_gallery"] = gr.Gallery(
             label="approved/ — финальный датасет", columns=4, interactive=False
         )
+        gr.Markdown("---")
+        components["export_btn"] = gr.Button(
+            "Выгрузить для обучения (LoRA)", variant="primary", elem_id="finish-export"
+        )
+        components["export_note"] = gr.Markdown("")
+        components["export_file"] = gr.File(label="LoRA-ready датасет (.zip)", interactive=False)
     return ScreenHandle(screen=ScreenId.FINISH, container=group, components=components)
 
 

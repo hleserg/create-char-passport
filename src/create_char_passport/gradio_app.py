@@ -339,6 +339,12 @@ def _wire_dataset(dataset: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     ).then(dataset_refresh, [session], out)
 
 
+def _wire_finish(finish: ScreenHandle, session: gr.State) -> None:
+    """LoRA-ready export — zip approved/ into an img + caption bundle for download."""
+    c = finish.components
+    c["export_btn"].click(handlers.on_export_lora, [session], [c["export_file"], c["export_note"]])
+
+
 class _Ctx:
     """Shared component references the per-screen wiring helpers need."""
 
@@ -390,6 +396,7 @@ def build_demo() -> gr.Blocks:
         _wire_outfits(handles[ScreenId.OUTFITS], session, ctx)
         _wire_props(handles[ScreenId.PROPS], session, ctx)
         _wire_dataset(handles[ScreenId.DATASET], session, ctx)
+        _wire_finish(handles[ScreenId.FINISH], session)
 
         # Populate the saved-characters list + cost banner from the bucket on app
         # open, so a returning user sees their characters without a paid call.
