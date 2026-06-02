@@ -11,9 +11,11 @@ and every referenced callable is unit-tested elsewhere.
 from __future__ import annotations
 
 from functools import partial
+from typing import Any
 
 import gradio as gr
 
+from create_char_passport.ai.wiring import wire_check_slot, wire_edit_slot
 from create_char_passport.gen import SceneId
 from create_char_passport.screens import handlers
 from create_char_passport.screens.router import SCREEN_ORDER, ScreenId, WizardSession
@@ -42,6 +44,8 @@ from create_char_passport.screens.views import (
 )
 from create_char_passport.state import CHARACTER_TABLE_KEYS
 from create_char_passport.wizard import value_for_label
+from create_char_passport.wizard.outfits import MAX_OUTFIT_DETAILS
+from create_char_passport.wizard.props import MAX_PROP_SHOTS
 
 
 def _wire_home(home: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
@@ -151,16 +155,18 @@ def _wire_passport(passport: ScreenHandle, session: gr.State, ctx: _Ctx) -> None
     # Forward off the last frame can leave to the emotions phase — place its cursor
     # and repaint that screen too.
     c["forward_btn"].click(handlers.on_passport_forward, [session], [session]).then(
-        handlers.on_enter_emotions, [session], [session]
-    ).then(handlers.on_enter_outfits, [session], [session]).then(
-        handlers.on_enter_props, [session], [session]
-    ).then(handlers.on_enter_dataset, [session], [session]).then(
-        screen_visibility, [session], ctx.containers
-    ).then(passport_refresh, [session], ctx.passport_outputs).then(
-        emotions_refresh, [session], ctx.emotions_outputs
-    ).then(outfits_refresh, [session], ctx.outfits_outputs).then(
-        props_refresh, [session], ctx.props_outputs
-    ).then(dataset_refresh, [session], ctx.dataset_outputs)
+        handlers.enforce_regen_gate, [session], [session]
+    ).then(handlers.on_enter_emotions, [session], [session]).then(
+        handlers.on_enter_outfits, [session], [session]
+    ).then(handlers.on_enter_props, [session], [session]).then(
+        handlers.on_enter_dataset, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(
+        passport_refresh, [session], ctx.passport_outputs
+    ).then(emotions_refresh, [session], ctx.emotions_outputs).then(
+        outfits_refresh, [session], ctx.outfits_outputs
+    ).then(props_refresh, [session], ctx.props_outputs).then(
+        dataset_refresh, [session], ctx.dataset_outputs
+    )
 
 
 def _wire_emotions(emotions: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
@@ -327,8 +333,14 @@ def _wire_dataset(dataset: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     ).then(cost_banner_text, [session], [ctx.cost_banner])
     # Approve archives the frame and advances — the last one finishes (→ FINISH).
     c["approve_btn"].click(handlers.on_dataset_approve, [session], [session]).then(
-        screen_visibility, [session], ctx.containers
-    ).then(dataset_refresh, [session], out).then(finish_refresh, [session], ctx.finish_outputs)
+        handlers.enforce_regen_gate, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(
+        passport_refresh, [session], ctx.passport_outputs
+    ).then(emotions_refresh, [session], ctx.emotions_outputs).then(
+        outfits_refresh, [session], ctx.outfits_outputs
+    ).then(props_refresh, [session], ctx.props_outputs).then(dataset_refresh, [session], out).then(
+        finish_refresh, [session], ctx.finish_outputs
+    )
     c["add_composition_btn"].click(
         handlers.on_dataset_add_composition, [session, c["new_composition"]], [session]
     ).then(dataset_refresh, [session], out)
@@ -343,6 +355,53 @@ def _wire_finish(finish: ScreenHandle, session: gr.State) -> None:
     """LoRA-ready export — zip approved/ into an img + caption bundle for download."""
     c = finish.components
     c["export_btn"].click(handlers.on_export_lora, [session], [c["export_file"], c["export_note"]])
+
+
+def _wire_ai_checks(handles: dict[ScreenId, ScreenHandle], session: gr.State, ctx: _Ctx) -> None:
+    """Fill every per-step "Проверить с ИИ" slot across the generation screens (§А)."""
+    checks: list[tuple[Any, Any, list[Any], int | None]] = [
+        (handles[ScreenId.PASSPORT].ai_check, passport_refresh, ctx.passport_outputs, None),
+        (handles[ScreenId.EMOTIONS].ai_check, emotions_refresh, ctx.emotions_outputs, None),
+        (handles[ScreenId.OUTFITS].ai_check, outfits_refresh, ctx.outfits_outputs, None),
+        (handles[ScreenId.DATASET].ai_check, dataset_refresh, ctx.dataset_outputs, None),
+    ]
+    outfit_components = handles[ScreenId.OUTFITS].components
+    for j in range(MAX_OUTFIT_DETAILS):
+        checks.append(
+            (outfit_components[f"detail_ai_check_{j}"], outfits_refresh, ctx.outfits_outputs, j)
+        )
+    prop_components = handles[ScreenId.PROPS].components
+    for j in range(MAX_PROP_SHOTS):
+        checks.append((prop_components[f"shot_ai_check_{j}"], props_refresh, ctx.props_outputs, j))
+    for slot, refresh_fn, outputs, index in checks:
+        if slot is None:
+            continue
+        wire_check_slot(
+            slot,
+            session=session,
+            cost_banner=ctx.cost_banner,
+            refresh_fn=refresh_fn,
+            refresh_outputs=outputs,
+            index=index,
+        )
+
+
+def _wire_ai_edits(handles: dict[ScreenId, ScreenHandle], session: gr.State, ctx: _Ctx) -> None:
+    """Fill the "Правка с ИИ" slots (passport + dataset only, §Б)."""
+    edits: list[tuple[Any, Any, list[Any]]] = [
+        (handles[ScreenId.PASSPORT].ai_edit, passport_refresh, ctx.passport_outputs),
+        (handles[ScreenId.DATASET].ai_edit, dataset_refresh, ctx.dataset_outputs),
+    ]
+    for slot, refresh_fn, outputs in edits:
+        if slot is None:
+            continue
+        wire_edit_slot(
+            slot,
+            session=session,
+            cost_banner=ctx.cost_banner,
+            refresh_fn=refresh_fn,
+            refresh_outputs=outputs,
+        )
 
 
 class _Ctx:
@@ -397,6 +456,8 @@ def build_demo() -> gr.Blocks:
         _wire_props(handles[ScreenId.PROPS], session, ctx)
         _wire_dataset(handles[ScreenId.DATASET], session, ctx)
         _wire_finish(handles[ScreenId.FINISH], session)
+        _wire_ai_checks(handles, session, ctx)
+        _wire_ai_edits(handles, session, ctx)
 
         # Populate the saved-characters list + cost banner from the bucket on app
         # open, so a returning user sees their characters without a paid call.

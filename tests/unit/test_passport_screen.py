@@ -320,6 +320,8 @@ def test_render_passport_exposes_slots_and_components() -> None:
     assert handle.prompt is not None
     assert handle.ai_check is not None
     assert handle.ai_edit is not None
-    assert handle.ai_check.context.step_key == "passport_face"
+    # ``passport_step`` placeholder so check/accept follow the visible frame
+    # across the 5-frame cursor (HLE-731) rather than always targeting FACE.
+    assert handle.ai_check.context.step_key == "passport_step"
     for key in PASSPORT_REFRESH_KEYS:
         assert key in handle.components

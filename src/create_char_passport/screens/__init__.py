@@ -16,6 +16,7 @@ from create_char_passport.screens.router import (
     pending_regen_step,
     previous_screen,
     resume_screen,
+    screen_for_step,
 )
 from create_char_passport.screens.views import (
     build_screens,
@@ -33,4 +34,5 @@ __all__ = [
     "previous_screen",
     "render_home",
     "resume_screen",
+    "screen_for_step",
 ]

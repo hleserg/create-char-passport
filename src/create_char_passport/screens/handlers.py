@@ -14,19 +14,33 @@ unit-tested by direct calls; the only thing left to the (test-covered)
 
 from __future__ import annotations
 
+from create_char_passport.ai.review import (
+    CheckOutcome,
+    EditOutcome,
+    apply_step_prompt,
+    check_step,
+    edit_character,
+)
 from create_char_passport.gen import SceneId, clear_scene_override, set_scene_override
 from create_char_passport.screens.router import (
     ScreenId,
     WizardSession,
     next_screen,
+    pending_regen_step,
     previous_screen,
     resume_screen,
+    screen_for_step,
 )
 from create_char_passport.state import (
     BASE_EMOTION_STEP,
     CharacterState,
     CostLedger,
+    StepRecord,
+    dataset_step,
     emotion_step,
+    outfit_detail_step,
+    outfit_step,
+    prop_shot_step,
 )
 from create_char_passport.storage import character_asset, save_state
 from create_char_passport.wizard.dataset import (
@@ -1061,6 +1075,147 @@ def on_export_lora(session: WizardSession) -> tuple[str | None, str]:
     if result.skipped:
         note += f" Пропущено {result.skipped} (файл не найден на диске)."
     return zip_path, note
+
+
+# --------------------------------------------------------------------------- #
+# Cross-screen need_regen gate (HLE-731 §Г)
+# --------------------------------------------------------------------------- #
+def enforce_regen_gate(session: WizardSession) -> WizardSession:
+    """Redirect to the earliest step flagged ``need_regen`` before a forward move.
+
+    Wired after the forward transitions from the two screens that carry «Правка с
+    ИИ» — passport-forward and dataset-approve — since those are the only paths
+    where an accepted edit can have just flagged an earlier step; it runs before
+    the repaint chain so the jump repaints for free. When a flag is set, jump the
+    cursor + screen to that step so the user must re-do it. The flag clears when
+    that step is regenerated or (re)approved (§Г). No-op when nothing is flagged.
+    """
+    state = session.character
+    if state is None:
+        return session
+    pending = pending_regen_step(state)
+    if pending is None:
+        return session
+    state.current_step = pending
+    session.current_screen = screen_for_step(pending)
+    session.notice = "ИИ-правка отметила шаг — доисправьте его перед переходом."
+    _persist(session)
+    return session
+
+
+# --------------------------------------------------------------------------- #
+# "Проверить с ИИ" — per-step check (HLE-731 §А)
+# --------------------------------------------------------------------------- #
+_CHECK_PLACEHOLDERS = {
+    "passport_step",
+    "outfit_step",
+    "outfit_detail_step",
+    "prop_shot_step",
+    "dataset_step",
+}
+
+
+def _resolve_check_key(state: CharacterState, slot_key: str, index: int | None) -> str | None:
+    """Map a slot's (possibly placeholder) key to the REAL step under the cursor.
+
+    The passport screen walks 5 frames through one slot, so ``passport_step``
+    resolves to the visible frame (else a check/accept on frame 2-5 would target —
+    and could clobber — the frozen FACE layer). Single-cursor parametric slots
+    (outfit / dataset) resolve from the active cursor; per-cell slots (outfit
+    detail, prop shot) use the baked ``index``. ``None`` when there is no active
+    entry (nothing to check yet).
+    """
+    if slot_key not in _CHECK_PLACEHOLDERS:
+        return slot_key  # already a real key (base_emotion)
+    if slot_key == "passport_step":
+        return current_passport_step(state)
+    if slot_key == "dataset_step":
+        idx = current_dataset_index(state)
+        return dataset_step(idx) if idx is not None else None
+    if slot_key in ("outfit_step", "outfit_detail_step"):
+        oi = current_outfit_index(state)
+        if oi is None:
+            return None
+        outfit_id = state.outfits[oi].id
+        if slot_key == "outfit_step":
+            return outfit_step(outfit_id)
+        return outfit_detail_step(outfit_id, (index or 0) + 1)
+    pi = current_prop_index(state)  # prop_shot_step
+    if pi is None:
+        return None
+    return prop_shot_step(state.props[pi].id, (index or 0) + 1)
+
+
+def _step_preview(state: CharacterState, step_key: str) -> str | None:
+    """Working-frame path for ``step_key`` to attach to the check (or ``None``)."""
+    record = state.steps.get(step_key)
+    if record is None or not record.last_path:
+        return None
+    path = character_asset(state.character_id, record.last_path)
+    return str(path) if path.is_file() else None
+
+
+def run_ai_check(
+    session: WizardSession, slot_key: str, index: int | None = None
+) -> CheckOutcome | None:
+    """Run the paid per-step "Check with AI"; bill it. ``None`` if nothing to check."""
+    state = session.character
+    if state is None:
+        return None
+    real_key = _resolve_check_key(state, slot_key, index)
+    if real_key is None:
+        return None
+    meter = CostLedger()
+    outcome = check_step(state, real_key, _step_preview(state, real_key), meter=meter)
+    _attribute_cost(session, meter)
+    return outcome
+
+
+def accept_ai_check(
+    session: WizardSession, slot_key: str, index: int | None, new_prompt: str
+) -> WizardSession:
+    """Write an accepted check prompt into the step's source field + persist."""
+    state = session.character
+    if state is None:
+        return session
+    real_key = _resolve_check_key(state, slot_key, index)
+    if real_key is not None and new_prompt.strip():
+        apply_step_prompt(state, real_key, new_prompt)
+        _persist(session)
+    return session
+
+
+# --------------------------------------------------------------------------- #
+# "Правка с ИИ" — whole-character multi-step review (HLE-731 §Б)
+# --------------------------------------------------------------------------- #
+def run_ai_edit(session: WizardSession, request: str) -> EditOutcome | None:
+    """Run the paid whole-character review; stash its blocks on the session."""
+    state = session.character
+    if state is None:
+        return None
+    preview = _step_preview(state, state.current_step) if state.current_step else None
+    meter = CostLedger()
+    outcome = edit_character(state, request or "", preview, meter=meter)
+    _attribute_cost(session, meter)
+    session.pending_edit_blocks = list(outcome.blocks)
+    return outcome
+
+
+def accept_ai_edit_block(session: WizardSession, index: int) -> WizardSession:
+    """Apply edit block ``index``: write its prompt + raise the step's regen gate."""
+    state = session.character
+    if state is None:
+        return session
+    blocks = session.pending_edit_blocks
+    if not 0 <= index < len(blocks) or blocks[index] is None:
+        return session
+    block = blocks[index]
+    if apply_step_prompt(state, block.step_key, block.new_prompt):
+        # The gate must SEE the flag: a step with no record yet gets one (§Г).
+        state.steps.setdefault(block.step_key, StepRecord()).need_regen = True
+        blocks[index] = None  # consumed — a re-accept is a no-op
+        _persist(session)
+    return session
 
 
 def _rows(rows: object) -> list[list[object]]:

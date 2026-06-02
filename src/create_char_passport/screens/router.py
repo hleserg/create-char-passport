@@ -95,6 +95,10 @@ class WizardSession:
     # Typed ``Any`` to avoid a router -> wizard import cycle; holds
     # ``wizard.ExtractedCharacter`` instances.
     extracted_characters: list[Any] = field(default_factory=list)
+    # Per-step edits proposed by the last "Правка с ИИ" review, awaiting the
+    # user's per-block Accept. Typed ``Any`` (holds ``ai.review.EditBlock``) to
+    # avoid a router -> ai import cycle. Cleared when a new review runs.
+    pending_edit_blocks: list[Any] = field(default_factory=list)
 
 
 def _flag_for_optional(screen: ScreenId, session: WizardSession) -> bool:
@@ -220,10 +224,11 @@ def resume_screen(state: CharacterState) -> ScreenId:
     """
     if not state.current_step:
         return ScreenId.CHAR_DATA
-    return _screen_for_step(state.current_step)
+    return screen_for_step(state.current_step)
 
 
-def _screen_for_step(step_key: str) -> ScreenId:
+def screen_for_step(step_key: str) -> ScreenId:
+    """Screen that owns ``step_key`` (used by resume + the need_regen gate)."""
     if step_key.startswith("passport_"):
         return ScreenId.PASSPORT
     if step_key == "base_emotion" or step_key.startswith("emotion_"):

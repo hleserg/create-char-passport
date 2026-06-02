@@ -131,6 +131,12 @@ def generate_outfit_scene(
             state.steps[outfit_step(outfit.id)] = StepRecord(
                 last_path=relative, prompt_layers=to_prompt_layers(layers)
             )
+        # §Г: regenerating ANY scene clears the AI-edit gate (front-full replaces
+        # the record above; back/profile clear it on the existing record), so the
+        # gate never re-redirects after a back/profile-only regen.
+        existing = state.steps.get(outfit_step(outfit.id))
+        if existing is not None:
+            existing.need_regen = False
     return result
 
 
@@ -265,6 +271,9 @@ def approve_outfit(state: CharacterState, index: int) -> bool:
     for scene in outfit_scenes(outfit):
         setattr(outfit.refs, f"{_SCENE_ATTR[scene]}_approved", True)
     state.active_outfit_id = outfit.id
+    record = state.steps.get(outfit_step(outfit.id))
+    if record is not None:
+        record.need_regen = False  # §Г: approving clears any AI-edit regen flag
     return True
 
 
@@ -300,3 +309,26 @@ def adjacent_outfit_step(state: CharacterState, index: int, *, forward: bool) ->
     """Step key of the next/previous outfit relative to ``index``, or ``None`` at the edge."""
     nxt = index + 1 if forward else index - 1
     return outfit_step(state.outfits[nxt].id) if 0 <= nxt < len(state.outfits) else None
+
+
+def set_outfit_prompt(state: CharacterState, step_key: str, text: str) -> bool:
+    """Write the OUTFIT prompt of the outfit named by ``step_key`` (``outfit_<id>``).
+
+    Used by the AI-assist write-back (HLE-731); returns ``False`` if no outfit
+    matches the key (so a stray ``&step&`` marker never creates a phantom outfit).
+    """
+    for outfit in state.outfits:
+        if outfit_step(outfit.id) == step_key:
+            outfit.prompt = text.strip()
+            return True
+    return False
+
+
+def set_outfit_detail_prompt(state: CharacterState, step_key: str, text: str) -> bool:
+    """Write a costume-detail prompt named by ``step_key`` (``outfit_<id>_detail_<n>``)."""
+    for outfit in state.outfits:
+        for n in range(1, len(outfit.details) + 1):
+            if outfit_detail_step(outfit.id, n) == step_key:
+                outfit.details[n - 1].prompt = text.strip()
+                return True
+    return False
