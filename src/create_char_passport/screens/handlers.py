@@ -44,7 +44,7 @@ from create_char_passport.wizard.emotions import (
     generate_emotion,
     missing_emotion_refs,
 )
-from create_char_passport.wizard.export import default_trigger, export_lora_zip
+from create_char_passport.wizard.export import export_lora_zip
 from create_char_passport.wizard.extraction import ExtractedCharacter, extract_characters
 from create_char_passport.wizard.forms import apply_table as _apply_table
 from create_char_passport.wizard.forms import (
@@ -1053,7 +1053,7 @@ def on_export_lora(session: WizardSession) -> tuple[str | None, str]:
         return None, "Не удалось собрать архив — проверь место на диске и попробуй ещё раз."
     if zip_path is None:
         return None, "Нет утверждённых кадров для экспорта — сначала собери датасет."
-    trig = default_trigger(state)
+    trig = result.trigger  # the trigger actually written into the caption files
     note = (
         f"Готово: {result.count} кадр(ов), триггер `{trig}`. "
         "Контент-подписи без стиля; формат и триггер предварительные (HLE-802)."
