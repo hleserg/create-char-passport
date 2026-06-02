@@ -49,6 +49,7 @@ class SceneId(StrEnum):
     BACK_FULL = "back_full"
     THREE_QUARTER_FULL = "three_quarter_full"
     PROFILE_FULL = "profile_full"
+    DETAIL_CLOSEUP = "detail_closeup"
 
 
 # Russian labels for the (future) "Edit scene" UI — value is what matters
@@ -60,6 +61,7 @@ SCENE_LABELS: dict[str, str] = {
     SceneId.BACK_FULL: "Спина, полный рост",
     SceneId.THREE_QUARTER_FULL: "3/4, полный рост",
     SceneId.PROFILE_FULL: "Профиль, полный рост",
+    SceneId.DETAIL_CLOSEUP: "Деталь костюма (крупно)",
 }
 
 # Canonical COMPOSITION prompts (from plan/proekt_zametki.md §5). Each is one
@@ -127,6 +129,13 @@ SCENE_PRESETS: dict[str, str] = {
         "neutral grey background, soft even lighting, arms relaxed at "
         "sides, no text, no panel border, no frame, no lettering. Not a three-quarter view, "
         "not facing the camera, face shown completely from the side."
+    ),
+    SceneId.DETAIL_CLOSEUP: (
+        "Extreme close-up detail shot of a single piece of the costume — the fabric, "
+        "material, trim, fastening or ornament filling the frame. No face, no head, no "
+        "full figure, no full body. Plain neutral grey background, soft even lighting, "
+        "sharp focus on the material and its texture, no text, no panel border, no frame, "
+        "no lettering, just the costume detail on a clean background."
     ),
 }
 
