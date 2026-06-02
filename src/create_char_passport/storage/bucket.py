@@ -100,6 +100,21 @@ def next_attempt_number(rejected_dir: Path, step_key: str) -> int:
     return n
 
 
+def save_to_approved(character_path: Path, name: str, frame: Path) -> Path:
+    """Copy ``frame`` into ``approved/<name>.png`` (the final dataset archive, §5).
+
+    Copies (not moves) so the working ``refs/`` frame stays as the preview; a
+    re-approval of the same composition overwrites its approved image. Returns
+    the destination path. No-op returning the destination when ``frame`` is absent.
+    """
+    approved = character_path / APPROVED_DIR
+    approved.mkdir(parents=True, exist_ok=True)
+    destination = approved / f"{name}{frame.suffix}"
+    if frame.exists():
+        shutil.copy(str(frame), destination)
+    return destination
+
+
 def archive_to_rejected(character_path: Path, step_key: str, frame: Path) -> Path:
     """Move ``frame`` into ``rejected/`` under a fresh ``<step_key>_attempt<N>``.
 

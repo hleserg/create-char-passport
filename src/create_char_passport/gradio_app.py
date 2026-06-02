@@ -19,7 +19,9 @@ from create_char_passport.screens import handlers
 from create_char_passport.screens.router import SCREEN_ORDER, ScreenId, WizardSession
 from create_char_passport.screens.views import (
     CHAR_DATA_REFRESH_KEYS,
+    DATASET_REFRESH_KEYS,
     EMOTIONS_REFRESH_KEYS,
+    FINISH_REFRESH_KEYS,
     OUTFITS_REFRESH_KEYS,
     PASSPORT_REFRESH_KEYS,
     PROPS_REFRESH_KEYS,
@@ -27,7 +29,9 @@ from create_char_passport.screens.views import (
     build_screens,
     char_data_refresh,
     cost_banner_text,
+    dataset_refresh,
     emotions_refresh,
+    finish_refresh,
     home_refresh,
     interactive_update,
     outfits_refresh,
@@ -59,14 +63,16 @@ def _wire_home(home: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     ).then(handlers.on_enter_emotions, [session], [session]).then(
         handlers.on_enter_outfits, [session], [session]
     ).then(handlers.on_enter_props, [session], [session]).then(
-        char_data_refresh, [session], ctx.char_data_outputs
-    ).then(passport_refresh, [session], ctx.passport_outputs).then(
-        emotions_refresh, [session], ctx.emotions_outputs
-    ).then(outfits_refresh, [session], ctx.outfits_outputs).then(
-        props_refresh, [session], ctx.props_outputs
-    ).then(screen_visibility, [session], ctx.containers).then(
-        cost_banner_text, [session], [ctx.cost_banner]
-    )
+        handlers.on_enter_dataset, [session], [session]
+    ).then(char_data_refresh, [session], ctx.char_data_outputs).then(
+        passport_refresh, [session], ctx.passport_outputs
+    ).then(emotions_refresh, [session], ctx.emotions_outputs).then(
+        outfits_refresh, [session], ctx.outfits_outputs
+    ).then(props_refresh, [session], ctx.props_outputs).then(
+        dataset_refresh, [session], ctx.dataset_outputs
+    ).then(finish_refresh, [session], ctx.finish_outputs).then(
+        screen_visibility, [session], ctx.containers
+    ).then(cost_banner_text, [session], [ctx.cost_banner])
 
 
 def _wire_style(style: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
@@ -148,11 +154,13 @@ def _wire_passport(passport: ScreenHandle, session: gr.State, ctx: _Ctx) -> None
         handlers.on_enter_emotions, [session], [session]
     ).then(handlers.on_enter_outfits, [session], [session]).then(
         handlers.on_enter_props, [session], [session]
-    ).then(screen_visibility, [session], ctx.containers).then(
-        passport_refresh, [session], ctx.passport_outputs
-    ).then(emotions_refresh, [session], ctx.emotions_outputs).then(
-        outfits_refresh, [session], ctx.outfits_outputs
-    ).then(props_refresh, [session], ctx.props_outputs)
+    ).then(handlers.on_enter_dataset, [session], [session]).then(
+        screen_visibility, [session], ctx.containers
+    ).then(passport_refresh, [session], ctx.passport_outputs).then(
+        emotions_refresh, [session], ctx.emotions_outputs
+    ).then(outfits_refresh, [session], ctx.outfits_outputs).then(
+        props_refresh, [session], ctx.props_outputs
+    ).then(dataset_refresh, [session], ctx.dataset_outputs)
 
 
 def _wire_emotions(emotions: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
@@ -185,17 +193,21 @@ def _wire_emotions(emotions: ScreenHandle, session: gr.State, ctx: _Ctx) -> None
     c["approve_btn"].click(handlers.on_emotions_approve, [session], [session]).then(
         handlers.on_enter_outfits, [session], [session]
     ).then(handlers.on_enter_props, [session], [session]).then(
-        screen_visibility, [session], ctx.containers
-    ).then(emotions_refresh, [session], ctx.emotions_outputs).then(
-        outfits_refresh, [session], ctx.outfits_outputs
-    ).then(props_refresh, [session], ctx.props_outputs)
+        handlers.on_enter_dataset, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(
+        emotions_refresh, [session], ctx.emotions_outputs
+    ).then(outfits_refresh, [session], ctx.outfits_outputs).then(
+        props_refresh, [session], ctx.props_outputs
+    ).then(dataset_refresh, [session], ctx.dataset_outputs)
     c["skip_btn"].click(handlers.on_emotions_skip, [session], [session]).then(
         handlers.on_enter_outfits, [session], [session]
     ).then(handlers.on_enter_props, [session], [session]).then(
-        screen_visibility, [session], ctx.containers
-    ).then(emotions_refresh, [session], ctx.emotions_outputs).then(
-        outfits_refresh, [session], ctx.outfits_outputs
-    ).then(props_refresh, [session], ctx.props_outputs)
+        handlers.on_enter_dataset, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(
+        emotions_refresh, [session], ctx.emotions_outputs
+    ).then(outfits_refresh, [session], ctx.outfits_outputs).then(
+        props_refresh, [session], ctx.props_outputs
+    ).then(dataset_refresh, [session], ctx.dataset_outputs)
     c["back_btn"].click(handlers.on_emotions_back, [session], [session]).then(
         screen_visibility, [session], ctx.containers
     ).then(passport_refresh, [session], ctx.passport_outputs).then(
@@ -249,11 +261,13 @@ def _wire_outfits(outfits: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
         outfits_refresh, [session], out
     )
 
-    # Approve advances to the next outfit or out of the phase (→ props); back steps back.
+    # Approve advances to the next outfit or out of the phase (→ props / dataset).
     c["approve_btn"].click(handlers.on_approve_outfit, [session], [session]).then(
         handlers.on_enter_props, [session], [session]
-    ).then(screen_visibility, [session], ctx.containers).then(outfits_refresh, [session], out).then(
-        props_refresh, [session], ctx.props_outputs
+    ).then(handlers.on_enter_dataset, [session], [session]).then(
+        screen_visibility, [session], ctx.containers
+    ).then(outfits_refresh, [session], out).then(props_refresh, [session], ctx.props_outputs).then(
+        dataset_refresh, [session], ctx.dataset_outputs
     )
     c["back_btn"].click(handlers.on_outfits_back, [session], [session]).then(
         screen_visibility, [session], ctx.containers
@@ -288,8 +302,10 @@ def _wire_props(props: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
         props_refresh, [session], out
     )
     c["forward_btn"].click(handlers.on_props_forward, [session], [session]).then(
-        screen_visibility, [session], ctx.containers
-    ).then(props_refresh, [session], out)
+        handlers.on_enter_dataset, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(props_refresh, [session], out).then(
+        dataset_refresh, [session], ctx.dataset_outputs
+    )
     # Back to the previous prop, or out to outfits — re-seed the outfit cursor
     # (mirrors the forward chains) so the landing OUTFITS screen is usable.
     c["back_btn"].click(handlers.on_props_back, [session], [session]).then(
@@ -297,6 +313,30 @@ def _wire_props(props: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     ).then(screen_visibility, [session], ctx.containers).then(
         outfits_refresh, [session], ctx.outfits_outputs
     ).then(props_refresh, [session], out)
+
+
+def _wire_dataset(dataset: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
+    """Dataset: per-composition generate / approve(→archive) / add / back + finish."""
+    c = dataset.components
+    out = ctx.dataset_outputs
+    c["composition_prompt"].blur(
+        handlers.on_dataset_prompt_edit, [session, c["composition_prompt"]], [session]
+    )
+    c["gen_btn"].click(handlers.on_dataset_generate, [session], [session]).then(
+        dataset_refresh, [session], out
+    ).then(cost_banner_text, [session], [ctx.cost_banner])
+    # Approve archives the frame and advances — the last one finishes (→ FINISH).
+    c["approve_btn"].click(handlers.on_dataset_approve, [session], [session]).then(
+        screen_visibility, [session], ctx.containers
+    ).then(dataset_refresh, [session], out).then(finish_refresh, [session], ctx.finish_outputs)
+    c["add_composition_btn"].click(
+        handlers.on_dataset_add_composition, [session, c["new_composition"]], [session]
+    ).then(dataset_refresh, [session], out)
+    c["back_btn"].click(handlers.on_dataset_back, [session], [session]).then(
+        handlers.on_enter_props, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(
+        props_refresh, [session], ctx.props_outputs
+    ).then(dataset_refresh, [session], out)
 
 
 class _Ctx:
@@ -314,6 +354,10 @@ class _Ctx:
         self.outfits_outputs = [of[key] for key in OUTFITS_REFRESH_KEYS]
         pr = handles[ScreenId.PROPS].components
         self.props_outputs = [pr[key] for key in PROPS_REFRESH_KEYS]
+        ds = handles[ScreenId.DATASET].components
+        self.dataset_outputs = [ds[key] for key in DATASET_REFRESH_KEYS]
+        fn = handles[ScreenId.FINISH].components
+        self.finish_outputs = [fn[key] for key in FINISH_REFRESH_KEYS]
         self.cost_banner = cost_banner
 
 
@@ -345,6 +389,7 @@ def build_demo() -> gr.Blocks:
         _wire_emotions(handles[ScreenId.EMOTIONS], session, ctx)
         _wire_outfits(handles[ScreenId.OUTFITS], session, ctx)
         _wire_props(handles[ScreenId.PROPS], session, ctx)
+        _wire_dataset(handles[ScreenId.DATASET], session, ctx)
 
         # Populate the saved-characters list + cost banner from the bucket on app
         # open, so a returning user sees their characters without a paid call.

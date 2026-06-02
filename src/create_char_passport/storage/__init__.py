@@ -19,6 +19,7 @@ from create_char_passport.storage.bucket import (
     load_state,
     next_attempt_number,
     save_state,
+    save_to_approved,
 )
 
 __all__ = [
@@ -34,4 +35,5 @@ __all__ = [
     "load_state",
     "next_attempt_number",
     "save_state",
+    "save_to_approved",
 ]
