@@ -63,7 +63,11 @@ def test_round_trip_full_state() -> None:
     ]
     state.props_enabled = True
     state.props = [
-        PropEntry(id="sword", name="iron sword", shots=[PropShot(what="hilt", prompt="closeup")])
+        PropEntry(
+            id="sword",
+            name="iron sword",
+            shots=[PropShot(what="hilt", prompt="closeup", ref="refs/prop_sword_shot_1.png")],
+        )
     ]
     state.prompt_layers = PromptLayers(style="grim comic", face="broad nose")
     state.steps = {
@@ -89,6 +93,8 @@ def test_round_trip_full_state() -> None:
     assert restored.outfits[0].refs.back_full_approved is False
     assert restored.outfits[0].details[0].prompt == "pauldron"
     assert restored.props[0].shots[0].what == "hilt"
+    assert restored.props[0].shots[0].prompt == "closeup"
+    assert restored.props[0].shots[0].ref == "refs/prop_sword_shot_1.png"
     assert restored.prompt_layers.style == "grim comic"
     assert restored.steps["passport_face"].approved_path == "refs/passport_face.png"
     assert restored.steps["passport_face"].prompt_layers.face == "broad nose"

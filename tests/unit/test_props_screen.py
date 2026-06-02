@@ -179,6 +179,58 @@ def test_props_refresh_add_disabled_at_cap(bucket: Path) -> None:
     assert upd["add_shot_btn"]["interactive"] is False
 
 
+def test_props_refresh_delete_confirm_visibility(bucket: Path) -> None:
+    session, _char = _started(bucket, shots=2)
+    upd = dict(zip(PROPS_REFRESH_KEYS, props_refresh(session), strict=True))
+    assert upd["shot_delete_confirm_0"]["visible"] is False  # no pending delete
+    session.prop_pending_delete = (0, 1)  # 1-based shot n → 0-based cell 0
+    upd = dict(zip(PROPS_REFRESH_KEYS, props_refresh(session), strict=True))
+    assert upd["shot_delete_confirm_0"]["visible"] is True
+    assert upd["shot_delete_confirm_1"]["visible"] is False
+
+
+def test_props_refresh_missing_ref_file_yields_no_preview(bucket: Path) -> None:
+    session, char = _started(bucket, shots=1)
+    char.props[0].shots[0].ref = "refs/prop_1_shot_1.png"  # ref set, file NOT written
+    upd = dict(zip(PROPS_REFRESH_KEYS, props_refresh(session), strict=True))
+    assert upd["shot_preview_0"]["value"] is None
+
+
+def test_prop_born_with_one_shot_via_sync(bucket: Path) -> None:
+    # A prop created through the real data-table path is born with one shot, so
+    # the props screen shows a usable shot cell immediately (§5).
+    from create_char_passport.wizard.forms import set_props_enabled, sync_props
+
+    state = blank_state("Conan")
+    set_props_enabled(state, True)
+    sync_props(state, [["sword"]])
+    assert len(state.props[0].shots) == 1
+    session = WizardSession(current_screen=ScreenId.PROPS, character=state)
+    handlers.on_enter_props(session)
+    upd = dict(zip(PROPS_REFRESH_KEYS, props_refresh(session), strict=True))
+    assert upd["shot_cell_0"]["visible"] is True
+
+
+def test_props_back_to_outfits_lands_usable(bucket: Path) -> None:
+    # Backing out of the first prop must leave a usable OUTFITS cursor (the
+    # back chain re-seeds it via on_enter_outfits), not a dead one.
+    from create_char_passport.state import OutfitEntry
+    from create_char_passport.wizard.outfits import current_outfit_index
+
+    state = blank_state("Conan")
+    state.outfits_enabled = True
+    state.outfits = [OutfitEntry(id="1", prompt="cloak")]
+    state.props_enabled = True
+    state.props = [PropEntry(id="1", name="sword", shots=[PropShot()])]
+    save_state(state)
+    session = WizardSession(current_screen=ScreenId.PROPS, character=state)
+    handlers.on_enter_props(session)  # cursor → prop_1_shot_1
+    handlers.on_props_back(session)  # leaves first prop → OUTFITS
+    assert session.current_screen is ScreenId.OUTFITS
+    handlers.on_enter_outfits(session)  # the back chain runs this next
+    assert current_outfit_index(state) is not None  # usable outfit cursor
+
+
 def test_render_props_components_and_slot() -> None:
     import gradio as gr
 
@@ -189,3 +241,6 @@ def test_render_props_components_and_slot() -> None:
     assert handle.ai_check.context.step_key == "prop_shot_step"
     for key in PROPS_REFRESH_KEYS:
         assert key in handle.components
+    # Every per-shot K4 ai-check container is reachable (not just the first).
+    for j in range(3):
+        assert f"shot_ai_check_{j}" in handle.components

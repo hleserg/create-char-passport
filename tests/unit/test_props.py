@@ -87,9 +87,11 @@ def test_generate_prop_shot_without_style_still_runs(
     state = blank_state("Conan")
     save_state(state)
     _with_prop(state)  # no style ref set
-    monkeypatch.setattr(generation, "generate_image", _Capture())
+    fake = _Capture()
+    monkeypatch.setattr(generation, "generate_image", fake)
     result = props.generate_prop_shot(state, 0, 1)
     assert result.ok  # a prop needs no refs at all
+    assert fake.calls[0]["roles"] == []  # zero references attached
     assert state.props[0].shots[0].ref == "refs/prop_1_shot_1.png"
 
 

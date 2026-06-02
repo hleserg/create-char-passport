@@ -290,9 +290,13 @@ def _wire_props(props: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     c["forward_btn"].click(handlers.on_props_forward, [session], [session]).then(
         screen_visibility, [session], ctx.containers
     ).then(props_refresh, [session], out)
+    # Back to the previous prop, or out to outfits — re-seed the outfit cursor
+    # (mirrors the forward chains) so the landing OUTFITS screen is usable.
     c["back_btn"].click(handlers.on_props_back, [session], [session]).then(
-        screen_visibility, [session], ctx.containers
-    ).then(outfits_refresh, [session], ctx.outfits_outputs).then(props_refresh, [session], out)
+        handlers.on_enter_outfits, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(
+        outfits_refresh, [session], ctx.outfits_outputs
+    ).then(props_refresh, [session], out)
 
 
 class _Ctx:

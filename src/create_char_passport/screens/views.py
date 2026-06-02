@@ -635,7 +635,9 @@ def render_props() -> ScreenHandle:
                 components[f"shot_preview_{j}"] = gr.Image(
                     label="Превью", interactive=False, type="filepath"
                 )
-                check = build_ai_check_slot("prop_shot_step", components[f"shot_prompt_{j}"])
+                components[f"shot_ai_check_{j}"] = build_ai_check_slot(
+                    "prop_shot_step", components[f"shot_prompt_{j}"]
+                )
                 with gr.Row():
                     components[f"shot_gen_{j}"] = gr.Button(
                         "Сгенерировать", elem_id=f"prop-shot-generate-{j}"
@@ -651,7 +653,8 @@ def render_props() -> ScreenHandle:
                     )
             components[f"shot_cell_{j}"] = cell
             if j == 0:
-                first_prompt, first_check = components["shot_prompt_0"], check
+                first_prompt = components["shot_prompt_0"]
+                first_check = components["shot_ai_check_0"]
         components["add_shot_btn"] = gr.Button("+ кадр", elem_id="prop-add-shot")
 
         with gr.Row():
