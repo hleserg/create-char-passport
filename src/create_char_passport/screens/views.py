@@ -58,6 +58,11 @@ from create_char_passport.wizard.passport import (
     frame_criterion,
     frame_title,
 )
+from create_char_passport.wizard.props import (
+    MAX_PROP_SHOTS,
+    PRODUCT_SHOT_HINT,
+    current_prop_index,
+)
 
 
 @dataclass(slots=True)
@@ -582,13 +587,123 @@ def outfits_refresh(session: WizardSession) -> list[Any]:
     return [values[k] for k in OUTFITS_REFRESH_KEYS]
 
 
+def _props_refresh_keys() -> tuple[str, ...]:
+    keys: list[str] = ["prop_label", "status"]
+    for j in range(MAX_PROP_SHOTS):
+        keys += [
+            f"shot_cell_{j}",
+            f"shot_what_{j}",
+            f"shot_prompt_{j}",
+            f"shot_preview_{j}",
+            f"shot_delete_confirm_{j}",
+        ]
+    keys.append("add_shot_btn")
+    return tuple(keys)
+
+
+# Components repainted when the props screen (re)renders, in fixed order.
+PROPS_REFRESH_KEYS: tuple[str, ...] = _props_refresh_keys()
+
+
 def render_props() -> ScreenHandle:
-    return _render_step(
-        ScreenId.PROPS,
-        body="Props / magic — product shots, no character in frame.",
-        representative_step_key="prop_step",
-        with_edit_slot=False,
+    """Props step (window 6, §5) — one prop at a time, 1..MAX_PROP_SHOTS frames.
+
+    A single ``gr.Group`` repainted by :func:`props_refresh` per cursor
+    (``current_step == prop_<id>_shot_<n>``). Each shot has a "what" field, a
+    generation prompt, a preview and generate/delete (with a delete-confirm for
+    a generated shot). The "+ кадр" button disables at the cap. ``ai_check``
+    slots are reserved empty containers (K4). Generation is product-shot only —
+    no character — handled in the wizard layer.
+    """
+    components: dict[str, Any] = {}
+    with gr.Group(visible=False) as group:
+        gr.Markdown("### Предмет")
+        components["prop_label"] = gr.Markdown("")
+        gr.Markdown(f"_{PRODUCT_SHOT_HINT}_")
+        components["status"] = gr.Markdown("")
+
+        first_prompt: Any = None
+        first_check: AISlot | None = None
+        for j in range(MAX_PROP_SHOTS):
+            with gr.Group(visible=False) as cell:
+                components[f"shot_what_{j}"] = gr.Textbox(
+                    label=f"Что это (кадр {j + 1})", lines=1, interactive=True
+                )
+                components[f"shot_prompt_{j}"] = gr.Textbox(
+                    label="Промт кадра", lines=2, interactive=True
+                )
+                components[f"shot_preview_{j}"] = gr.Image(
+                    label="Превью", interactive=False, type="filepath"
+                )
+                check = build_ai_check_slot("prop_shot_step", components[f"shot_prompt_{j}"])
+                with gr.Row():
+                    components[f"shot_gen_{j}"] = gr.Button(
+                        "Сгенерировать", elem_id=f"prop-shot-generate-{j}"
+                    )
+                    components[f"shot_delete_{j}"] = gr.Button(
+                        "Удалить", elem_id=f"prop-shot-delete-{j}"
+                    )
+                    components[f"shot_delete_confirm_{j}"] = gr.Button(
+                        "Удалить с генерацией",
+                        variant="stop",
+                        visible=False,
+                        elem_id=f"prop-shot-delete-confirm-{j}",
+                    )
+            components[f"shot_cell_{j}"] = cell
+            if j == 0:
+                first_prompt, first_check = components["shot_prompt_0"], check
+        components["add_shot_btn"] = gr.Button("+ кадр", elem_id="prop-add-shot")
+
+        with gr.Row():
+            components["back_btn"] = gr.Button("← Назад", elem_id="props-back")
+            components["forward_btn"] = gr.Button(
+                "Далее →", variant="primary", elem_id="props-forward"
+            )
+    return ScreenHandle(
+        screen=ScreenId.PROPS,
+        container=group,
+        prompt=first_prompt,
+        ai_check=first_check,
+        ai_edit=None,
+        components=components,
     )
+
+
+def props_refresh(session: WizardSession) -> list[Any]:
+    """Repaint the props screen for the cursor's prop, in ``PROPS_REFRESH_KEYS`` order.
+
+    No character / no cursor prop → no-op updates (plus the status line). Per
+    prop: the name heading and each shot cell (what + prompt + preview, shown
+    only up to the shot count), the delete-confirm affordance (from the session
+    pending-delete flag), and the "+ кадр" button gated on the shot cap.
+    """
+    state = session.character
+    values: dict[str, Any] = dict.fromkeys(PROPS_REFRESH_KEYS, gr.update())
+    values["status"] = gr.update(value=session.notice or "")
+    if state is None:
+        return [values[k] for k in PROPS_REFRESH_KEYS]
+    idx = current_prop_index(state)
+    if idx is None:
+        return [values[k] for k in PROPS_REFRESH_KEYS]
+    prop = state.props[idx]
+    values["prop_label"] = gr.update(
+        value=f"**Предмет {idx + 1} из {len(state.props)}:** {prop.name.strip() or '—'}"
+    )
+    for j in range(MAX_PROP_SHOTS):
+        shot = prop.shots[j] if j < len(prop.shots) else None
+        values[f"shot_cell_{j}"] = gr.update(visible=shot is not None)
+        values[f"shot_what_{j}"] = gr.update(value=shot.what if shot else "")
+        values[f"shot_prompt_{j}"] = gr.update(value=shot.prompt if shot else "")
+        preview: str | None = None
+        if shot is not None and shot.ref:
+            path = character_asset(state.character_id, shot.ref)
+            if path.is_file():
+                preview = str(path)
+        values[f"shot_preview_{j}"] = gr.update(value=preview)
+        pending = session.prop_pending_delete == (idx, j + 1)
+        values[f"shot_delete_confirm_{j}"] = gr.update(visible=pending)
+    values["add_shot_btn"] = gr.update(interactive=len(prop.shots) < MAX_PROP_SHOTS)
+    return [values[k] for k in PROPS_REFRESH_KEYS]
 
 
 def render_dataset() -> ScreenHandle:

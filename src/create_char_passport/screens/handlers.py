@@ -68,6 +68,15 @@ from create_char_passport.wizard.passport import (
     next_passport_step,
     previous_passport_step,
 )
+from create_char_passport.wizard.props import (
+    add_prop_shot,
+    adjacent_prop_step,
+    current_prop_index,
+    delete_prop_shot,
+    first_prop_step,
+    generate_prop_shot,
+    shot_has_generation,
+)
 from create_char_passport.wizard.style import apply_style, draft_style_prompt, set_style_ref
 
 
@@ -759,6 +768,152 @@ def on_outfits_back(session: WizardSession) -> WizardSession:
         return session
     state, index = found
     prev = adjacent_outfit_step(state, index, forward=False)
+    if prev is not None:
+        state.current_step = prev
+    else:
+        session.current_screen = previous_screen(session)
+    _persist(session)
+    return session
+
+
+# --------------------------------------------------------------------------- #
+# Props phase (optional) — one prop at a time, 1..3 product shots (window 6, §5)
+# --------------------------------------------------------------------------- #
+def _current_prop(session: WizardSession) -> tuple[CharacterState, int] | None:
+    """The character + cursor prop index, or ``None`` (no character / no prop)."""
+    state = session.character
+    if state is None:
+        return None
+    index = current_prop_index(state)
+    return (state, index) if index is not None else None
+
+
+def on_enter_props(session: WizardSession) -> WizardSession:
+    """Mark the props phase: cursor → the first prop, unless already on one."""
+    state = session.character
+    if state is not None and session.current_screen is ScreenId.PROPS:
+        session.prop_pending_delete = None
+        if state.props_enabled and current_prop_index(state) is None:
+            first = first_prop_step(state)
+            if first is not None:
+                state.current_step = first
+        session.notice = ""
+        _persist(session)
+    return session
+
+
+def on_prop_shot_what_edit(session: WizardSession, what: str, *, j: int) -> WizardSession:
+    """Persist the edited "what is it" field of shot ``j`` (0-based)."""
+    found = _current_prop(session)
+    if found is not None:
+        state, index = found
+        shots = state.props[index].shots
+        if 0 <= j < len(shots):
+            shots[j].what = what.strip()
+            _persist(session)
+    return session
+
+
+def on_prop_shot_prompt_edit(session: WizardSession, prompt: str, *, j: int) -> WizardSession:
+    """Persist the edited generation prompt of shot ``j`` (0-based)."""
+    found = _current_prop(session)
+    if found is not None:
+        state, index = found
+        shots = state.props[index].shots
+        if 0 <= j < len(shots):
+            shots[j].prompt = prompt.strip()
+            _persist(session)
+    return session
+
+
+def on_prop_shot_generate(session: WizardSession, j: int) -> WizardSession:
+    """Generate product-shot cell ``j`` (0-based) for the cursor prop (no character)."""
+    found = _current_prop(session)
+    if found is None:
+        return session
+    state, index = found
+    n = j + 1
+    if not 1 <= n <= len(state.props[index].shots):
+        return session
+    session.prop_pending_delete = None
+    meter = CostLedger()
+    result = generate_prop_shot(state, index, n, meter=meter)
+    session.notice = (
+        "Кадр готов." if result.ok else (result.error or "Не удалось сгенерировать кадр.")
+    )
+    _attribute_cost(session, meter)
+    return session
+
+
+def on_prop_add_shot(session: WizardSession) -> WizardSession:
+    """Append an empty product-shot slot to the cursor prop (capped at 3)."""
+    found = _current_prop(session)
+    if found is not None:
+        state, index = found
+        session.prop_pending_delete = None
+        add_prop_shot(state, index)
+        _persist(session)
+    return session
+
+
+def on_prop_delete_shot(session: WizardSession, j: int) -> WizardSession:
+    """Delete shot ``j`` (0-based); a generated shot first asks to confirm (§5)."""
+    found = _current_prop(session)
+    if found is None:
+        return session
+    state, index = found
+    n = j + 1
+    if shot_has_generation(state, index, n):
+        session.prop_pending_delete = (index, n)
+        session.notice = "У кадра есть генерация — подтверди удаление."
+        return session
+    delete_prop_shot(state, index, n)
+    session.prop_pending_delete = None
+    _persist(session)
+    return session
+
+
+def on_prop_delete_shot_confirmed(session: WizardSession, j: int) -> WizardSession:
+    """Confirm deletion of a generated product shot."""
+    found = _current_prop(session)
+    if found is not None:
+        state, index = found
+        delete_prop_shot(state, index, j + 1)
+    session.prop_pending_delete = None
+    _persist(session)
+    return session
+
+
+def on_props_forward(session: WizardSession) -> WizardSession:
+    """Advance to the next prop, or out of the (optional, ungated) props phase."""
+    session.prop_pending_delete = None
+    found = _current_prop(session)
+    if found is None:
+        session.current_screen = next_screen(session)
+        _persist(session)
+        return session
+    state, index = found
+    nxt = adjacent_prop_step(state, index, forward=True)
+    if nxt is not None:
+        state.current_step = nxt
+        session.notice = "Следующий предмет."
+    else:
+        session.current_screen = next_screen(session)
+        session.notice = ""
+    _persist(session)
+    return session
+
+
+def on_props_back(session: WizardSession) -> WizardSession:
+    """Step back: previous prop, or out of the phase from the first prop."""
+    session.prop_pending_delete = None
+    found = _current_prop(session)
+    if found is None:
+        session.current_screen = previous_screen(session)
+        _persist(session)
+        return session
+    state, index = found
+    prev = adjacent_prop_step(state, index, forward=False)
     if prev is not None:
         state.current_step = prev
     else:
