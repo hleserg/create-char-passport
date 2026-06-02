@@ -141,3 +141,17 @@ def adjacent_prop_step(state: CharacterState, index: int, *, forward: bool) -> s
     """Step key of the next/previous prop relative to ``index``, or ``None`` at the edge."""
     nxt = index + 1 if forward else index - 1
     return prop_shot_step(state.props[nxt].id, 1) if 0 <= nxt < len(state.props) else None
+
+
+def set_prop_shot_prompt(state: CharacterState, step_key: str, text: str) -> bool:
+    """Write a prop-shot prompt named by ``step_key`` (``prop_<id>_shot_<n>``).
+
+    Used by the AI-assist write-back (HLE-731); returns ``False`` if no shot
+    matches (a stray ``&step&`` marker never creates a phantom prop/shot).
+    """
+    for prop in state.props:
+        for n in range(1, len(prop.shots) + 1):
+            if prop_shot_step(prop.id, n) == step_key:
+                prop.shots[n - 1].prompt = text.strip()
+                return True
+    return False
