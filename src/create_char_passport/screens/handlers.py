@@ -14,7 +14,13 @@ unit-tested by direct calls; the only thing left to the (test-covered)
 
 from __future__ import annotations
 
-from create_char_passport.ai.review import CheckOutcome, apply_step_prompt, check_step
+from create_char_passport.ai.review import (
+    CheckOutcome,
+    EditOutcome,
+    apply_step_prompt,
+    check_step,
+    edit_character,
+)
 from create_char_passport.gen import SceneId, clear_scene_override, set_scene_override
 from create_char_passport.screens.router import (
     ScreenId,
@@ -29,6 +35,7 @@ from create_char_passport.state import (
     BASE_EMOTION_STEP,
     CharacterState,
     CostLedger,
+    StepRecord,
     dataset_step,
     emotion_step,
     outfit_detail_step,
@@ -1161,6 +1168,39 @@ def accept_ai_check(
     real_key = _resolve_check_key(state, slot_key, index)
     if real_key is not None and new_prompt.strip():
         apply_step_prompt(state, real_key, new_prompt)
+        _persist(session)
+    return session
+
+
+# --------------------------------------------------------------------------- #
+# "Правка с ИИ" — whole-character multi-step review (HLE-731 §Б)
+# --------------------------------------------------------------------------- #
+def run_ai_edit(session: WizardSession, request: str) -> EditOutcome | None:
+    """Run the paid whole-character review; stash its blocks on the session."""
+    state = session.character
+    if state is None:
+        return None
+    preview = _step_preview(state, state.current_step) if state.current_step else None
+    meter = CostLedger()
+    outcome = edit_character(state, request or "", preview, meter=meter)
+    _attribute_cost(session, meter)
+    session.pending_edit_blocks = list(outcome.blocks)
+    return outcome
+
+
+def accept_ai_edit_block(session: WizardSession, index: int) -> WizardSession:
+    """Apply edit block ``index``: write its prompt + raise the step's regen gate."""
+    state = session.character
+    if state is None:
+        return session
+    blocks = session.pending_edit_blocks
+    if not 0 <= index < len(blocks) or blocks[index] is None:
+        return session
+    block = blocks[index]
+    if apply_step_prompt(state, block.step_key, block.new_prompt):
+        # The gate must SEE the flag: a step with no record yet gets one (§Г).
+        state.steps.setdefault(block.step_key, StepRecord()).need_regen = True
+        blocks[index] = None  # consumed — a re-accept is a no-op
         _persist(session)
     return session
 

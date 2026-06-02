@@ -95,6 +95,10 @@ class WizardSession:
     # Typed ``Any`` to avoid a router -> wizard import cycle; holds
     # ``wizard.ExtractedCharacter`` instances.
     extracted_characters: list[Any] = field(default_factory=list)
+    # Per-step edits proposed by the last "Правка с ИИ" review, awaiting the
+    # user's per-block Accept. Typed ``Any`` (holds ``ai.review.EditBlock``) to
+    # avoid a router -> ai import cycle. Cleared when a new review runs.
+    pending_edit_blocks: list[Any] = field(default_factory=list)
 
 
 def _flag_for_optional(screen: ScreenId, session: WizardSession) -> bool:

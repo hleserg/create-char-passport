@@ -105,3 +105,59 @@ def test_accept_ai_check_writes_via_cursor(bucket: Path) -> None:
     session = WizardSession(character=state)
     handlers.accept_ai_check(session, "dataset_step", None, "full body, crouching")
     assert state.dataset_compositions[0] == "full body, crouching"
+
+
+# --------------------------------------------------------------------------- #
+# Edit-with-AI: handlers + glue arity
+# --------------------------------------------------------------------------- #
+def test_run_ai_edit_stores_blocks(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from create_char_passport.ai.review import EditBlock, EditOutcome
+
+    monkeypatch.setattr(
+        handlers,
+        "edit_character",
+        lambda *a, **k: EditOutcome(
+            [EditBlock("passport_face", "сделай суровее", "stern jaw")], "", True
+        ),
+    )
+    state = blank_state("Conan")
+    save_state(state)
+    session = WizardSession(character=state)
+    outcome = handlers.run_ai_edit(session, "сделай его суровее")
+    assert outcome is not None and len(outcome.blocks) == 1
+    assert len(session.pending_edit_blocks) == 1
+
+
+def test_accept_ai_edit_block_writes_and_flags(bucket: Path) -> None:
+    from create_char_passport.ai.review import EditBlock
+
+    state = blank_state("Conan")
+    state.dataset_compositions = ["old pose"]
+    save_state(state)
+    session = WizardSession(character=state)
+    session.pending_edit_blocks = [EditBlock("dataset_0", "динамичнее", "full body, mid-leap")]
+    handlers.accept_ai_edit_block(session, 0)
+    assert state.dataset_compositions[0] == "full body, mid-leap"
+    assert state.steps["dataset_0"].need_regen is True  # gate can now see it
+    assert session.pending_edit_blocks[0] is None  # consumed; re-accept is a no-op
+
+
+def test_edit_result_updates_arity() -> None:
+    from create_char_passport.ai.review import EditBlock, EditOutcome
+
+    outcome = EditOutcome([EditBlock("dataset_0", "fix", "new pose")], "", True)
+    updates = wiring.edit_result_updates(WizardSession(), outcome)
+    # [session, note, (group, md) * MAX_EDIT_BLOCKS, cost_banner]
+    assert len(updates) == 2 * wiring.MAX_EDIT_BLOCKS + 3
+    assert updates[2]["visible"] is True  # first block group shown
+
+
+def test_on_edit_submit_arity(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from create_char_passport.ai.review import EditOutcome
+
+    monkeypatch.setattr(
+        handlers, "run_ai_edit", lambda session, request: EditOutcome([], "всё ок", True)
+    )
+    session = WizardSession(character=blank_state("Conan"))
+    out = wiring._on_edit_submit(session, "проверь")
+    assert len(out) == 2 * wiring.MAX_EDIT_BLOCKS + 3
