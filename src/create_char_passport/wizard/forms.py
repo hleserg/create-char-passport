@@ -27,6 +27,7 @@ from create_char_passport.state import (
     CharacterState,
     OutfitEntry,
     PropEntry,
+    PropShot,
     blank_state,
     normalize_character_table,
 )
@@ -162,7 +163,9 @@ def sync_props(state: CharacterState, rows: Iterable[Iterable[object]]) -> None:
             entry = previous[idx]
             entry.name = name
         else:
-            entry = PropEntry(id=_next_ordinal_id(assigned), name=name)
+            # Born with one shot (§5: "1 кадр по умолчанию"); the user adds up
+            # to MAX_PROP_SHOTS more or deletes it explicitly.
+            entry = PropEntry(id=_next_ordinal_id(assigned), name=name, shots=[PropShot()])
         assigned.add(entry.id)
         rebuilt.append(entry)
     state.props = rebuilt

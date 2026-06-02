@@ -83,6 +83,9 @@ class WizardSession:
     # Transient UI flag: Approve found a costume detail with a prompt but no
     # generation (§5) — a second Approve proceeds (details persist, nothing lost).
     outfit_pending_approve_confirm: bool = False
+    # Transient UI flag: ``(prop_index, shot_n)`` whose delete needs a confirm
+    # (the product shot already has a generation, §5); ``None`` when no pending.
+    prop_pending_delete: tuple[int, int] | None = None
     notice: str = ""
     # Running API spend for the whole session (incl. pre-character calls like
     # extraction); the per-character figure lives on ``character.cost``.
