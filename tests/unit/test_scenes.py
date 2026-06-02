@@ -53,6 +53,17 @@ def test_scene_for_step_single_scene_steps(step_key: str, expected: SceneId) -> 
     assert scene_for_step(step_key) == expected
 
 
+def test_composition_presets_carry_no_expression() -> None:
+    """Layer separation: COMPOSITION must say nothing about facial expression.
+
+    Expression is owned solely by the EXPRESSION layer (K3). A "neutral
+    expression" clause in the shared portrait composition used to leak into
+    emotion frames and dampen the very emotion the frame exists to capture.
+    """
+    for scene in SceneId:
+        assert "expression" not in SCENE_PRESETS[scene].lower(), scene
+
+
 @pytest.mark.parametrize(
     "step_key", ["outfit_outfit_1", "outfit_x_detail_1", "prop_p_shot_1", "dataset_0"]
 )
