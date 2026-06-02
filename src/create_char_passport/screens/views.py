@@ -146,10 +146,17 @@ def render_style() -> ScreenHandle:
     with gr.Group(visible=False) as group:
         _heading(
             ScreenId.STYLE,
-            "Upload ~5 style reference photos so the LLM can draft the STYLE prompt.",
+            "Upload 3–5 CLEAN single comic panels (no speech bubbles, no panel "
+            "borders) — the LLM drafts the STYLE prompt from them and the first "
+            "becomes the style reference image.",
         )
         components["images"] = gr.File(
-            label="Style reference photos", file_count="multiple", type="filepath"
+            label="Clean single-panel style references", file_count="multiple", type="filepath"
+        )
+        gr.Markdown(
+            "_Crop tight to one panel and remove text balloons. This same clean "
+            "panel anchors the style for both generation here and a future "
+            "style-LoRA, so they stay coherent (HLE-802)._"
         )
         components["draft_btn"] = gr.Button("Draft style prompt (LLM)", variant="primary")
         components["style_text"] = gr.Textbox(
@@ -800,8 +807,16 @@ def dataset_refresh(session: WizardSession) -> list[Any]:
     return [values[k] for k in DATASET_REFRESH_KEYS]
 
 
-# Components repainted on the finish screen.
-FINISH_REFRESH_KEYS: tuple[str, ...] = ("finish_note", "finish_gallery")
+# Components repainted on the finish screen. The export widgets are included so
+# they are CLEARED on every (re)entry — the export click writes them directly and
+# never re-runs finish_refresh, so a stale download from a previous character can
+# never linger when the finish screen is shown for a different one.
+FINISH_REFRESH_KEYS: tuple[str, ...] = (
+    "finish_note",
+    "finish_gallery",
+    "export_note",
+    "export_file",
+)
 
 
 def render_finish() -> ScreenHandle:
@@ -812,21 +827,30 @@ def render_finish() -> ScreenHandle:
         components["finish_gallery"] = gr.Gallery(
             label="approved/ — финальный датасет", columns=4, interactive=False
         )
+        gr.Markdown("---")
+        components["export_btn"] = gr.Button(
+            "Выгрузить для обучения (LoRA)", variant="primary", elem_id="finish-export"
+        )
+        components["export_note"] = gr.Markdown("")
+        components["export_file"] = gr.File(label="LoRA-ready датасет (.zip)", interactive=False)
     return ScreenHandle(screen=ScreenId.FINISH, container=group, components=components)
 
 
 def finish_refresh(session: WizardSession) -> list[Any]:
     """Repaint the finish screen with the approved-dataset samples."""
     state = session.character
+    # Clear the export widgets on every (re)entry so a previous character's zip
+    # never lingers in the download button (the export click repopulates them).
+    cleared_export = [gr.update(value=""), gr.update(value=None)]
     if state is None:
-        return [gr.update(), gr.update(value=[])]
+        return [gr.update(), gr.update(value=[]), *cleared_export]
     samples = approved_samples(state)
     note = (
         f"## Готово — в датасете {len(samples)} кадр(ов)\n\n"
         "Папка `approved/` — финальный датасет; `rejected/` хранит отклонённые "
         "(они тоже полезны для вариативности)."
     )
-    return [gr.update(value=note), gr.update(value=samples)]
+    return [gr.update(value=note), gr.update(value=samples), *cleared_export]
 
 
 _RENDERERS: dict[ScreenId, Any] = {

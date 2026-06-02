@@ -218,3 +218,6 @@ def test_render_dataset_and_finish_components() -> None:
         assert key in ds.components
     for key in FINISH_REFRESH_KEYS:
         assert key in fn.components
+    # LoRA-ready export controls (HLE-805) live on the finish screen.
+    for key in ("export_btn", "export_file", "export_note"):
+        assert key in fn.components

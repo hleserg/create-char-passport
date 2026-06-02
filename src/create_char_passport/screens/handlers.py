@@ -44,6 +44,7 @@ from create_char_passport.wizard.emotions import (
     generate_emotion,
     missing_emotion_refs,
 )
+from create_char_passport.wizard.export import export_lora_zip
 from create_char_passport.wizard.extraction import ExtractedCharacter, extract_characters
 from create_char_passport.wizard.forms import apply_table as _apply_table
 from create_char_passport.wizard.forms import (
@@ -1029,6 +1030,37 @@ def on_dataset_back(session: WizardSession) -> WizardSession:
         session.current_screen = previous_screen(session)
     _persist(session)
     return session
+
+
+# --------------------------------------------------------------------------- #
+# Finish screen — LoRA-ready export (HLE-805)
+# --------------------------------------------------------------------------- #
+def on_export_lora(session: WizardSession) -> tuple[str | None, str]:
+    """Zip the approved dataset into a LoRA-ready bundle; return (zip_path, note).
+
+    No character or no approved frame is a no-op (``None`` + a short notice). The
+    caption format + trigger token are provisional (HLE-802) — surfaced in the
+    note so the user knows they are not yet pinned to the training tooling.
+    """
+    state = session.character
+    if state is None:
+        return None, ""
+    try:
+        zip_path, result = export_lora_zip(state)
+    except (OSError, ValueError):
+        # Disk/zip I/O failure — degrade to a friendly note (this surface must
+        # never raise a raw error into the finish screen), like the no-frames arm.
+        return None, "Не удалось собрать архив — проверь место на диске и попробуй ещё раз."
+    if zip_path is None:
+        return None, "Нет утверждённых кадров для экспорта — сначала собери датасет."
+    trig = result.trigger  # the trigger actually written into the caption files
+    note = (
+        f"Готово: {result.count} кадр(ов), триггер `{trig}`. "
+        "Контент-подписи без стиля; формат и триггер предварительные (HLE-802)."
+    )
+    if result.skipped:
+        note += f" Пропущено {result.skipped} (файл не найден на диске)."
+    return zip_path, note
 
 
 def _rows(rows: object) -> list[list[object]]:
