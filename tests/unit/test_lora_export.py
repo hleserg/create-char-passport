@@ -179,9 +179,11 @@ def test_export_excludes_props_and_details(bucket: Path, monkeypatch: pytest.Mon
     assert result.count == 3
 
 
-def test_export_excludes_disabled_blocks(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Refs from a block the user turned OFF must not be exported (mirrors the
-    # canonical pipeline enumerator, which gates on the enabled flags).
+def test_export_includes_refs_even_when_blocks_disabled(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A photo generated and then turned OFF is still a character image (nothing
+    # is auto-deleted) — export collects by ref presence, NOT the enabled toggle.
     state = blank_state("Conan")
     save_state(state)
     _identity_ready(state)
@@ -197,7 +199,39 @@ def test_export_excludes_disabled_blocks(bucket: Path, monkeypatch: pytest.Monke
     )
     _approved_dataset(state, ["walking"], monkeypatch)
     result = export_lora_dataset(state, bucket / "out")
-    assert result.count == 3  # only 2 passport + 1 dataset; disabled emotion/outfit refs skipped
+    # 2 passport + base emotion + 1 series emotion + 1 outfit scene + 1 dataset = 6.
+    assert result.count == 6
+
+
+def test_emotion_caption_keeps_verbatim_value(bucket: Path) -> None:
+    # The exact emotion label (incl. punctuation) must survive into the caption,
+    # not be de-slugged ("angry, furious" -> "angry furious").
+    state = blank_state("Conan")
+    save_state(state)
+    state.prompt_layers.face = "rugged barbarian"
+    state.emotions.base_emotion.value = "excited, manic"
+    state.emotions.base_emotion.ref = _write_ref(state, "refs/base_emotion.png")
+    out = bucket / "out"
+    export_lora_dataset(state, out)
+    captions = [t.read_text(encoding="utf-8") for t in out.glob("*.txt")]
+    assert any("excited, manic" in c for c in captions)  # comma preserved verbatim
+
+
+def test_back_view_caption_drops_expression(bucket: Path) -> None:
+    # The face is not visible in a back view, so no expression is captioned.
+    state = blank_state("Conan")
+    save_state(state)
+    _write_ref(state, "refs/passport_back.png")
+    state.steps["passport_back"] = StepRecord(
+        last_path="refs/passport_back.png",
+        approved_path="refs/passport_back.png",
+        prompt_layers=PromptLayers(face="rugged barbarian", expression="neutral"),
+    )
+    out = bucket / "out"
+    export_lora_dataset(state, out)
+    caption = (out / "000.txt").read_text(encoding="utf-8")
+    assert "back view" in caption
+    assert "neutral" not in caption  # expression dropped for a back view
 
 
 def test_emotion_caption_uses_base_outfit_not_active(bucket: Path) -> None:
@@ -360,3 +394,19 @@ def test_on_export_lora_ok(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert path is not None and Path(path).is_file()
     assert "4" in note  # 2 passport + 2 dataset
     assert "conan_char" in note
+
+
+def test_on_export_lora_io_failure_degrades(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A disk/zip I/O error must surface as a friendly note, never a raw crash.
+    state = blank_state("Conan")
+    save_state(state)
+    _identity_ready(state)
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(handlers, "export_lora_zip", _boom)
+    session = WizardSession(current_screen=ScreenId.FINISH, character=state)
+    path, note = handlers.on_export_lora(session)
+    assert path is None
+    assert "Не удалось" in note

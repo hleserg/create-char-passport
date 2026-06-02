@@ -22,10 +22,11 @@ training-clean:
 
 Captions are also pinned to ground truth: emotion portraits are always shot in
 the *base* outfit, so their captions force the base outfit (never the outfit
-that happens to be active at export time). Images that do NOT show the character
-are excluded: prop product-shots and outfit-detail macros (face blanked). Blocks
-the user turned off (emotions / outfits) are excluded, mirroring the canonical
-pipeline enumerator.
+that happens to be active at export time). Collection is by ref presence, NOT
+gated on the ``enabled`` toggles — a generated image whose block the user later
+turned off is still a character photo (nothing is auto-deleted, §5), so it ships.
+Only images that do NOT show the character are excluded: prop product-shots and
+outfit-detail macros (face blanked).
 
 The caption *format* and the trigger *token* are PROVISIONAL defaults from the
 HLE-802 contract; they must ultimately match whatever the char-LoRA tooling
@@ -116,17 +117,27 @@ class _Frame:
 
     ``framing`` is the short clean composition phrase for the caption (outfit
     scene angle or a dataset pose); ``None`` defers to the scene-derived framing.
+    ``expression`` carries the verbatim emotion value (emotion frames only), so
+    the caption keeps the exact label instead of de-slugging the step key.
     """
 
     step_key: str
     rel_path: str
     framing: str | None = None
+    expression: str | None = None
 
 
 def default_trigger(state: CharacterState) -> str:
-    """Provisional per-character trigger token (HLE-802 ``<char>_char``)."""
-    base = state.name.strip() or state.character_id
-    return f"{slugify(base)}_char"
+    """Provisional per-character trigger token (HLE-802 ``<char>_char``).
+
+    Falls back to the character id when the name has no ASCII letters (e.g. a
+    Cyrillic-only name slugs to the empty ``"x"`` fallback) so the trigger is at
+    least character-scoped rather than the generic ``"x"``.
+    """
+    slug = slugify(state.name)
+    if slug == "x":  # slugify's empty-input fallback — the name carried no ASCII
+        slug = slugify(state.character_id)
+    return f"{slug}_char"
 
 
 def content_caption(layers: PromptLayers, trigger: str) -> str:
@@ -152,9 +163,13 @@ def _collect_frames(state: CharacterState) -> list[_Frame]:
 
     Passport (5 angles) + base emotion + emotion series + outfit scenes +
     dataset compositions — the whole golden set plus its dataset expansion.
-    Emotion / outfit blocks the user disabled are excluded (mirrors
-    ``ordered_step_keys``). Props (product shots with NO character) and
-    outfit-detail macros (close-ups with the face blanked) are always excluded.
+
+    Collection is by REF PRESENCE, deliberately NOT gated on the ``enabled``
+    toggles: a generated image that the user later turned the block off for is
+    still a character photo and is never auto-deleted (§5), so it belongs in the
+    training set ("hand over ALL the character's photos", HLE-802). Only frames
+    that do NOT show the character are excluded: props (product shots) and
+    outfit-detail macros (close-ups with the face blanked).
     """
     frames: list[_Frame] = []
     for key in PASSPORT_STEPS:
@@ -162,18 +177,16 @@ def _collect_frames(state: CharacterState) -> list[_Frame]:
         if record is not None and record.approved_path:
             frames.append(_Frame(key, record.approved_path))
     base = state.emotions.base_emotion
-    if base.enabled and base.ref:
-        frames.append(_Frame(BASE_EMOTION_STEP, base.ref))
-    if state.emotions.enabled:
-        for item in state.emotions.items:
-            if item.ref:
-                frames.append(_Frame(emotion_step(item.value), item.ref))
-    if state.outfits_enabled:
-        for outfit in state.outfits:
-            for attr, angle in _OUTFIT_SCENES:
-                rel = getattr(outfit.refs, attr)
-                if rel:
-                    frames.append(_Frame(outfit_step(outfit.id), rel, framing=angle))
+    if base.ref:
+        frames.append(_Frame(BASE_EMOTION_STEP, base.ref, expression=base.value))
+    for item in state.emotions.items:
+        if item.ref:
+            frames.append(_Frame(emotion_step(item.value), item.ref, expression=item.value))
+    for outfit in state.outfits:
+        for attr, angle in _OUTFIT_SCENES:
+            rel = getattr(outfit.refs, attr)
+            if rel:
+                frames.append(_Frame(outfit_step(outfit.id), rel, framing=angle))
     for idx in range(len(state.dataset_compositions)):
         record = state.steps.get(dataset_step(idx))
         if record is not None and record.approved_path:
@@ -232,10 +245,17 @@ def _clean_framing(state: CharacterState, frame: _Frame) -> str:
 
 
 def _frame_caption(state: CharacterState, frame: _Frame, trigger: str) -> str:
-    """Content-only caption for one frame, with a clean framing phrase."""
-    layers = replace(
-        _caption_layers(state, frame.step_key), composition=_clean_framing(state, frame)
-    )
+    """Content-only caption for one frame, with a clean framing phrase.
+
+    The verbatim emotion value (when carried) replaces the de-slugged expression;
+    a back view drops the expression entirely, since the face is not visible.
+    """
+    framing = _clean_framing(state, frame)
+    layers = replace(_caption_layers(state, frame.step_key), composition=framing)
+    if frame.expression is not None:
+        layers = replace(layers, expression=frame.expression)
+    if "back view" in framing:
+        layers = replace(layers, expression="")
     return content_caption(layers, trigger)
 
 

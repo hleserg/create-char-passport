@@ -1045,7 +1045,12 @@ def on_export_lora(session: WizardSession) -> tuple[str | None, str]:
     state = session.character
     if state is None:
         return None, ""
-    zip_path, result = export_lora_zip(state)
+    try:
+        zip_path, result = export_lora_zip(state)
+    except (OSError, ValueError):
+        # Disk/zip I/O failure — degrade to a friendly note (this surface must
+        # never raise a raw error into the finish screen), like the no-frames arm.
+        return None, "Не удалось собрать архив — проверь место на диске и попробуй ещё раз."
     if zip_path is None:
         return None, "Нет утверждённых кадров для экспорта — сначала собери датасет."
     trig = default_trigger(state)
