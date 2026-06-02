@@ -19,8 +19,10 @@ from create_char_passport.screens.router import (
     ScreenId,
     WizardSession,
     next_screen,
+    pending_regen_step,
     previous_screen,
     resume_screen,
+    screen_for_step,
 )
 from create_char_passport.state import (
     BASE_EMOTION_STEP,
@@ -1061,6 +1063,30 @@ def on_export_lora(session: WizardSession) -> tuple[str | None, str]:
     if result.skipped:
         note += f" Пропущено {result.skipped} (файл не найден на диске)."
     return zip_path, note
+
+
+# --------------------------------------------------------------------------- #
+# Cross-screen need_regen gate (HLE-731 §Г)
+# --------------------------------------------------------------------------- #
+def enforce_regen_gate(session: WizardSession) -> WizardSession:
+    """Redirect to the earliest step flagged ``need_regen`` before a forward move.
+
+    Wired after every forward transition (and before the repaint chain): when an
+    accepted AI-edit raised ``need_regen`` on an earlier step, jump the cursor +
+    screen there so the user must re-do it. The flag is cleared when that step is
+    regenerated or (re)approved. No-op when nothing is flagged.
+    """
+    state = session.character
+    if state is None:
+        return session
+    pending = pending_regen_step(state)
+    if pending is None:
+        return session
+    state.current_step = pending
+    session.current_screen = screen_for_step(pending)
+    session.notice = "ИИ-правка отметила шаг — доисправьте его перед переходом."
+    _persist(session)
+    return session
 
 
 def _rows(rows: object) -> list[list[object]]:

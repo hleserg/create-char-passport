@@ -220,10 +220,11 @@ def resume_screen(state: CharacterState) -> ScreenId:
     """
     if not state.current_step:
         return ScreenId.CHAR_DATA
-    return _screen_for_step(state.current_step)
+    return screen_for_step(state.current_step)
 
 
-def _screen_for_step(step_key: str) -> ScreenId:
+def screen_for_step(step_key: str) -> ScreenId:
+    """Screen that owns ``step_key`` (used by resume + the need_regen gate)."""
     if step_key.startswith("passport_"):
         return ScreenId.PASSPORT
     if step_key == "base_emotion" or step_key.startswith("emotion_"):

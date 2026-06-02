@@ -265,6 +265,9 @@ def approve_outfit(state: CharacterState, index: int) -> bool:
     for scene in outfit_scenes(outfit):
         setattr(outfit.refs, f"{_SCENE_ATTR[scene]}_approved", True)
     state.active_outfit_id = outfit.id
+    record = state.steps.get(outfit_step(outfit.id))
+    if record is not None:
+        record.need_regen = False  # §Г: approving clears any AI-edit regen flag
     return True
 
 

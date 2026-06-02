@@ -146,6 +146,7 @@ def approve_dataset_frame(state: CharacterState, idx: int) -> bool:
     char_dir = working.parent.parent  # <character>/refs/<file> → <character>
     destination = save_to_approved(char_dir, approved_name(state, idx), working)
     record.approved_path = f"{destination.parent.name}/{destination.name}"
+    record.need_regen = False  # §Г: approving clears any AI-edit regen flag
     return True
 
 
