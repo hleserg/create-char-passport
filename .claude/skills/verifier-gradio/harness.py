@@ -152,9 +152,24 @@ class Drive:
         self.page.keyboard.press("Tab")  # type: ignore[attr-defined]
         time.sleep(1.2)
 
-    def click_button(self, name: str) -> None:
+    def click_button(self, name: str, *, settle: float = 1.5) -> None:
         self.page.get_by_role("button", name=name).click()  # type: ignore[attr-defined]
-        time.sleep(1.5)
+        time.sleep(settle)
+
+    def wait_for_text(self, text: str, *, timeout: float = 25.0) -> bool:
+        """Poll the page body until ``text`` appears (robust to slow renders under load).
+
+        Heavy transitions (e.g. "Open saved" fires a long chained refresh) can take
+        well over a second on a loaded machine; reading ``body()`` on a fixed sleep
+        then races the render. Polling until the expected marker shows removes the
+        flake without ever waiting on Gradio's never-idle SSE channel.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if text in self.page.inner_text("body"):  # type: ignore[attr-defined]
+                return True
+            time.sleep(0.5)
+        return False
 
     def check(self, label: str) -> None:
         self.page.get_by_label(label, exact=True).check()  # type: ignore[attr-defined]
@@ -191,7 +206,7 @@ def drive(url: str, shots: Path) -> Iterator[Drive]:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
-        page.set_default_timeout(15000)
+        page.set_default_timeout(30000)
         try:
             yield Drive(page, shots)
         finally:

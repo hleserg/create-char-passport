@@ -47,11 +47,17 @@ def run(d: Drive, bucket: Path, url: str) -> None:
     # 3) open a saved (ready) character -> resume to char-data, prefilled
     d.pick("Saved characters (from bucket)", "Lucius — ready")
     d.click_button("Open saved")
+    d.wait_for_text(
+        "Character: Lucius"
+    )  # resume fires a long chained refresh — wait, don't race it
     d.shot("03_chardata")
     body = d.body()
     d.expect("Character: Lucius" in body, "open-saved: resumed to char-data for Lucius")
     d.expect("set on the passport step" in body, "char-data: base outfit read-only")
-    d.expect("neutral" in body and "smiling warmly" in body, "char-data: 3-emotion table rendered")
+    d.expect(
+        "angry, furious" in body and "smiling warmly" in body,
+        "char-data: emotion table rendered",
+    )
 
     # 4) optional block toggle (free) + 5) edit persists to state.json (free)
     d.check("Emotions")
