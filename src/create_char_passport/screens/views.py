@@ -38,6 +38,12 @@ from create_char_passport.wizard import (
     prop_rows,
     table_from_state,
 )
+from create_char_passport.wizard.dataset import (
+    approved_samples,
+    composition_values,
+    current_dataset_index,
+    frame_generated,
+)
 from create_char_passport.wizard.emotions import (
     BASE_EMOTION_DESCRIPTION,
     BASE_EMOTION_HINT,
@@ -709,20 +715,113 @@ def props_refresh(session: WizardSession) -> list[Any]:
     return [values[k] for k in PROPS_REFRESH_KEYS]
 
 
+# Components repainted when the dataset screen (re)renders, in fixed order.
+DATASET_REFRESH_KEYS: tuple[str, ...] = (
+    "dataset_progress",
+    "composition_prompt",
+    "dataset_preview",
+    "status",
+    "approve_btn",
+)
+
+
 def render_dataset() -> ScreenHandle:
-    return _render_step(
-        ScreenId.DATASET,
-        body="Dataset phase — iterate composition array, approved/ vs rejected/.",
-        representative_step_key="dataset_step",
-        with_edit_slot=True,
+    """Dataset step (window 7, §5) — one composition at a time, repainted per cursor.
+
+    Auto-generate → regenerate (old → ``rejected/``) → approve (→ ``approved/``).
+    The composition prompt is editable (with reserved K4 ai-check + ai-edit
+    slots); a small "add composition" field extends the array. Background is a
+    fixed neutral grey (no random background).
+    """
+    components: dict[str, Any] = {}
+    with gr.Group(visible=False) as group:
+        components["dataset_progress"] = gr.Markdown("### Датасет")
+        components["composition_prompt"] = gr.Textbox(
+            label="Композиция (промт кадра)", lines=3, interactive=True, elem_id="dataset-prompt"
+        )
+        prompt = components["composition_prompt"]
+        ai_check = build_ai_check_slot("dataset_step", prompt)
+        ai_edit = build_ai_edit_slot("dataset_step", prompt)
+        components["dataset_preview"] = gr.Image(
+            label="Превью кадра", interactive=False, type="filepath"
+        )
+        components["status"] = gr.Markdown("")
+        with gr.Row():
+            components["gen_btn"] = gr.Button(
+                "Сгенерировать", variant="primary", elem_id="dataset-generate"
+            )
+            components["approve_btn"] = gr.Button(
+                "Утвердить →", variant="primary", elem_id="dataset-approve"
+            )
+        with gr.Row():
+            components["new_composition"] = gr.Textbox(
+                label="Добавить композицию", lines=1, interactive=True
+            )
+            components["add_composition_btn"] = gr.Button("+ композиция", elem_id="dataset-add")
+        components["back_btn"] = gr.Button("← Назад", elem_id="dataset-back")
+    return ScreenHandle(
+        screen=ScreenId.DATASET,
+        container=group,
+        prompt=prompt,
+        ai_check=ai_check,
+        ai_edit=ai_edit,
+        components=components,
     )
+
+
+def dataset_refresh(session: WizardSession) -> list[Any]:
+    """Repaint the dataset screen for the cursor's composition, in key order."""
+    state = session.character
+    values: dict[str, Any] = dict.fromkeys(DATASET_REFRESH_KEYS, gr.update())
+    values["status"] = gr.update(value=session.notice or "")
+    if state is None:
+        return [values[k] for k in DATASET_REFRESH_KEYS]
+    idx = current_dataset_index(state)
+    if idx is None:
+        return [values[k] for k in DATASET_REFRESH_KEYS]
+    compositions = composition_values(state)
+    values["dataset_progress"] = gr.update(
+        value=f"### Датасет — кадр {idx + 1} из {len(compositions)}"
+    )
+    values["composition_prompt"] = gr.update(value=compositions[idx])
+    record = state.steps.get(f"dataset_{idx}")
+    preview: str | None = None
+    if record is not None and record.last_path:
+        path = character_asset(state.character_id, record.last_path)
+        if path.is_file():
+            preview = str(path)
+    values["dataset_preview"] = gr.update(value=preview)
+    values["approve_btn"] = gr.update(interactive=frame_generated(state, idx))
+    return [values[k] for k in DATASET_REFRESH_KEYS]
+
+
+# Components repainted on the finish screen.
+FINISH_REFRESH_KEYS: tuple[str, ...] = ("finish_note", "finish_gallery")
 
 
 def render_finish() -> ScreenHandle:
-    return _render_simple(
-        ScreenId.FINISH,
-        "All done — archive of approved/ + rejected/ ready for download.",
+    """Finish screen — the final dataset archive (approved samples + a note)."""
+    components: dict[str, Any] = {}
+    with gr.Group(visible=False) as group:
+        components["finish_note"] = gr.Markdown("## Готово")
+        components["finish_gallery"] = gr.Gallery(
+            label="approved/ — финальный датасет", columns=4, interactive=False
+        )
+    return ScreenHandle(screen=ScreenId.FINISH, container=group, components=components)
+
+
+def finish_refresh(session: WizardSession) -> list[Any]:
+    """Repaint the finish screen with the approved-dataset samples."""
+    state = session.character
+    if state is None:
+        return [gr.update(), gr.update(value=[])]
+    samples = approved_samples(state)
+    note = (
+        f"## Готово — в датасете {len(samples)} кадр(ов)\n\n"
+        "Папка `approved/` — финальный датасет; `rejected/` хранит отклонённые "
+        "(они тоже полезны для вариативности)."
     )
+    return [gr.update(value=note), gr.update(value=samples)]
 
 
 _RENDERERS: dict[ScreenId, Any] = {

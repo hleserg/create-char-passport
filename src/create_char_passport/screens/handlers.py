@@ -29,6 +29,16 @@ from create_char_passport.state import (
     emotion_step,
 )
 from create_char_passport.storage import character_asset, save_state
+from create_char_passport.wizard.dataset import (
+    add_composition,
+    adjacent_dataset_step,
+    approve_dataset_frame,
+    current_dataset_index,
+    edit_composition,
+    ensure_compositions,
+    first_dataset_step,
+    generate_dataset_frame,
+)
 from create_char_passport.wizard.emotions import (
     generate_base_emotion,
     generate_emotion,
@@ -914,6 +924,105 @@ def on_props_back(session: WizardSession) -> WizardSession:
         return session
     state, index = found
     prev = adjacent_prop_step(state, index, forward=False)
+    if prev is not None:
+        state.current_step = prev
+    else:
+        session.current_screen = previous_screen(session)
+    _persist(session)
+    return session
+
+
+# --------------------------------------------------------------------------- #
+# Dataset phase (final) — composition array → approved/ archive (window 7, §5)
+# --------------------------------------------------------------------------- #
+def on_enter_dataset(session: WizardSession) -> WizardSession:
+    """Seed the composition array (if empty) and put the cursor on the first frame."""
+    state = session.character
+    if state is not None and session.current_screen is ScreenId.DATASET:
+        ensure_compositions(state)
+        if current_dataset_index(state) is None:
+            first = first_dataset_step(state)
+            if first is not None:
+                state.current_step = first
+        session.notice = ""
+        _persist(session)
+    return session
+
+
+def on_dataset_prompt_edit(session: WizardSession, prompt: str) -> WizardSession:
+    """Persist an edited composition prompt for the cursor frame."""
+    state = session.character
+    if state is None:
+        return session
+    idx = current_dataset_index(state)
+    if idx is not None:
+        edit_composition(state, idx, prompt)
+        _persist(session)
+    return session
+
+
+def on_dataset_generate(session: WizardSession) -> WizardSession:
+    """Auto-generate (or regenerate) the cursor composition and bill the call."""
+    state = session.character
+    if state is None:
+        return session
+    idx = current_dataset_index(state)
+    if idx is None:
+        return session
+    meter = CostLedger()
+    result = generate_dataset_frame(state, idx, meter=meter)
+    session.notice = (
+        "Кадр готов." if result.ok else (result.error or "Не удалось сгенерировать кадр.")
+    )
+    _attribute_cost(session, meter)
+    return session
+
+
+def on_dataset_add_composition(session: WizardSession, prompt: str) -> WizardSession:
+    """Append a new composition to the array (blank text ignored)."""
+    state = session.character
+    if state is not None and prompt.strip():
+        add_composition(state, prompt)
+        _persist(session)
+    return session
+
+
+def on_dataset_approve(session: WizardSession) -> WizardSession:
+    """Approve the cursor frame into ``approved/`` → next composition, or finish."""
+    state = session.character
+    if state is None:
+        return session
+    idx = current_dataset_index(state)
+    if idx is None:
+        return session
+    if not approve_dataset_frame(state, idx):
+        session.notice = "Сначала сгенерируй кадр, потом утверждай."
+        return session
+    nxt = adjacent_dataset_step(state, idx, forward=True)
+    if nxt is not None:
+        state.current_step = nxt  # next composition
+        session.notice = "Кадр в датасете — следующая композиция."
+    else:
+        # Array done → finish: current_step → null (§6) and show the archive.
+        session.current_screen = next_screen(session)
+        state.current_step = None
+        session.notice = ""
+    _persist(session)
+    return session
+
+
+def on_dataset_back(session: WizardSession) -> WizardSession:
+    """Step back: previous composition, or out of the phase from the first one."""
+    state = session.character
+    if state is None:
+        session.current_screen = previous_screen(session)
+        return session
+    idx = current_dataset_index(state)
+    if idx is None:
+        session.current_screen = previous_screen(session)
+        _persist(session)
+        return session
+    prev = adjacent_dataset_step(state, idx, forward=False)
     if prev is not None:
         state.current_step = prev
     else:
