@@ -37,6 +37,7 @@ from create_char_passport.screens.views import (
     update_table_fields,
 )
 from create_char_passport.state import CHARACTER_TABLE_KEYS
+from create_char_passport.verify_api import verify_call_llm, verify_generate_image
 from create_char_passport.wizard import value_for_label
 
 
@@ -317,6 +318,31 @@ class _Ctx:
         self.cost_banner = cost_banner
 
 
+def _wire_verify_api() -> None:
+    """Hidden generation API for the verify harness (private Space → HF-auth gated).
+
+    Exposes ``/verify_generate`` and ``/verify_llm`` (callable via ``gradio_client``)
+    so a geo-blocked dev machine can route real Gemini calls through the Space.
+    No UI: invisible components only define the input/output schema.
+    """
+    with gr.Group(visible=False):
+        vg_layers = gr.Textbox()
+        vg_refs = gr.File(file_count="multiple", type="filepath")
+        vg_roles = gr.Textbox()
+        vg_conflict = gr.Checkbox()
+        vg_out = gr.Image(type="filepath")
+        gr.Button().click(
+            verify_generate_image,
+            [vg_layers, vg_refs, vg_roles, vg_conflict],
+            [vg_out],
+            api_name="verify_generate",
+        )
+        vl_prompt = gr.Textbox()
+        vl_imgs = gr.File(file_count="multiple", type="filepath")
+        vl_out = gr.Textbox()
+        gr.Button().click(verify_call_llm, [vl_prompt, vl_imgs], [vl_out], api_name="verify_llm")
+
+
 def build_demo() -> gr.Blocks:
     """Return the wizard's ``gr.Blocks`` demo.
 
@@ -345,6 +371,7 @@ def build_demo() -> gr.Blocks:
         _wire_emotions(handles[ScreenId.EMOTIONS], session, ctx)
         _wire_outfits(handles[ScreenId.OUTFITS], session, ctx)
         _wire_props(handles[ScreenId.PROPS], session, ctx)
+        _wire_verify_api()
 
         # Populate the saved-characters list + cost banner from the bucket on app
         # open, so a returning user sees their characters without a paid call.
