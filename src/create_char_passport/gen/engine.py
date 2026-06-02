@@ -95,7 +95,10 @@ _ROLE_GUIDANCE: dict[str, str] = {
     "style": (
         "the ART-STYLE reference — copy ONLY its artistic manner (medium, line work, "
         "shading, colour palette, rendering); take NOTHING of its content, characters, "
-        "pose, objects or background"
+        "pose, objects or background. This image may be a full comic-book page: do NOT "
+        "reproduce its panels, panel borders, gutters, page layout, frames, captions, "
+        "speech bubbles or any text — output one single standalone uncropped illustration, "
+        "never a comic page"
     ),
     "face": "the FACE reference — copy this character's facial identity only",
     "body": (
