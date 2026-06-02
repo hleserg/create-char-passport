@@ -156,7 +156,7 @@ class Drive:
         self.page.get_by_role("button", name=name).click()  # type: ignore[attr-defined]
         time.sleep(settle)
 
-    def wait_for_text(self, text: str, *, timeout: float = 25.0) -> bool:
+    def wait_for_text(self, text: str, *, timeout: float = 90.0) -> bool:
         """Poll the page body until ``text`` appears (robust to slow renders under load).
 
         Heavy transitions (e.g. "Open saved" fires a long chained refresh) can take
