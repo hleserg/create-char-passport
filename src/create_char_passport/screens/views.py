@@ -27,7 +27,12 @@ from create_char_passport.screens.router import (
     ScreenId,
     WizardSession,
 )
-from create_char_passport.state import CHARACTER_TABLE_FIELDS, CHARACTER_TABLE_KEYS, CostLedger
+from create_char_passport.state import (
+    CHARACTER_TABLE_FIELDS,
+    CHARACTER_TABLE_KEYS,
+    CostLedger,
+    dataset_step,
+)
 from create_char_passport.storage import character_asset
 from create_char_passport.wizard import (
     BASE_OUTFIT_PLACEHOLDER,
@@ -784,7 +789,7 @@ def dataset_refresh(session: WizardSession) -> list[Any]:
         value=f"### Датасет — кадр {idx + 1} из {len(compositions)}"
     )
     values["composition_prompt"] = gr.update(value=compositions[idx])
-    record = state.steps.get(f"dataset_{idx}")
+    record = state.steps.get(dataset_step(idx))
     preview: str | None = None
     if record is not None and record.last_path:
         path = character_asset(state.character_id, record.last_path)

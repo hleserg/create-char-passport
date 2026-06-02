@@ -65,9 +65,22 @@ def composition_values(state: CharacterState) -> list[str]:
 
 
 def dataset_name(state: CharacterState, idx: int) -> str:
-    """Composition-based filename slug for frame ``idx`` (``approved/<slug>.png``)."""
+    """Composition slug for frame ``idx`` (the human-readable ``approved/`` name)."""
     text = state.dataset_compositions[idx] if 0 <= idx < len(state.dataset_compositions) else ""
     return slugify(text) if text.strip() else f"dataset_{idx}"
+
+
+def approved_name(state: CharacterState, idx: int) -> str:
+    """Unique ``approved/`` filename for frame ``idx`` — its slug, disambiguated.
+
+    When two compositions slugify to the same value (e.g. duplicates), the index
+    is appended so they never collide on one ``approved/*.png`` (else one frame
+    would silently overwrite the other). Working/rejected files use the stable
+    ``dataset_<idx>`` key (see :func:`generate_dataset_frame`), not the slug.
+    """
+    slug = dataset_name(state, idx)
+    twins = sum(1 for j in range(len(state.dataset_compositions)) if dataset_name(state, j) == slug)
+    return slug if twins <= 1 else f"{slug}_{idx}"
 
 
 def _require_idx(state: CharacterState, idx: int) -> None:
@@ -88,15 +101,20 @@ def generate_dataset_frame(
     COMPOSITION = the composition prompt + the neutral-grey studio directive;
     OUTFIT follows ``active_outfit_id``; identity refs (style+face+body); the new
     outfit differs from the refs' clothing when a non-base outfit is active, so
-    ``outfit_conflict`` is set accordingly. A fresh generation clears any prior
-    approval. Regeneration archives the previous frame to ``rejected/``.
+    ``outfit_conflict`` is set accordingly. Regeneration archives the previous
+    frame to ``rejected/<dataset_idx>_attempt<N>``.
+
+    The working file is keyed by the stable ``dataset_<idx>`` (not the editable
+    composition slug) so a prompt edit or a duplicate composition can never
+    clobber another frame or skip the regen archive; the human-readable slug is
+    used only for the ``approved/`` copy on approval.
     """
     _require_idx(state, idx)
     composition = f"{state.dataset_compositions[idx].strip()}\n{BACKGROUND_DIRECTIVE}".strip()
     layers = build_prompt_layers(state, dataset_step(idx), overrides={"composition": composition})
     result, relative = render_step_image(
         state,
-        dataset_name(state, idx),
+        dataset_step(idx),
         layers,
         identity_refs(state),
         meter=meter,
@@ -114,8 +132,9 @@ def approve_dataset_frame(state: CharacterState, idx: int) -> bool:
     """Copy the working frame for ``idx`` into ``approved/`` (named by composition).
 
     Returns ``False`` (no-op) when the frame has not been generated yet, else
-    copies ``refs/<slug>.png`` → ``approved/<slug>.png`` and records the approved
-    path on the step. Idempotent: re-approving overwrites the same approved file.
+    copies ``refs/dataset_<idx>.png`` → ``approved/<unique-slug>.png`` and records
+    the approved path on the step. Idempotent: re-approving overwrites the same
+    approved file.
     """
     _require_idx(state, idx)
     record = state.steps.get(dataset_step(idx))
@@ -125,7 +144,7 @@ def approve_dataset_frame(state: CharacterState, idx: int) -> bool:
     if not working.is_file():
         return False
     char_dir = working.parent.parent  # <character>/refs/<file> → <character>
-    destination = save_to_approved(char_dir, dataset_name(state, idx), working)
+    destination = save_to_approved(char_dir, approved_name(state, idx), working)
     record.approved_path = f"{destination.parent.name}/{destination.name}"
     return True
 

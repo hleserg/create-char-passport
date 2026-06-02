@@ -85,6 +85,18 @@ def test_dataset_handlers_noop_without_character() -> None:
     assert handlers.on_dataset_back(session).current_screen is not ScreenId.DATASET
 
 
+def test_on_enter_dataset_noop_off_screen(bucket: Path) -> None:
+    # Chained into every forward transition — must NOT seed/clobber when the
+    # destination is a different screen (the second guard arm).
+    session, char = _started(bucket, compositions=[])
+    char.dataset_compositions = []
+    char.current_step = "prop_1_shot_1"
+    session.current_screen = ScreenId.PROPS
+    handlers.on_enter_dataset(session)
+    assert char.current_step == "prop_1_shot_1"  # cursor preserved
+    assert char.dataset_compositions == []  # not seeded
+
+
 # --------------------------------------------------------------------------- #
 # Generate / edit / add
 # --------------------------------------------------------------------------- #
@@ -94,7 +106,7 @@ def test_on_dataset_generate_sets_ref_and_bills(
     monkeypatch.setattr(generation, "generate_image", _fake_ok)
     session, char = _started(bucket, compositions=["walking"])
     out = handlers.on_dataset_generate(session)
-    assert char.steps["dataset_0"].last_path == "refs/walking.png"
+    assert char.steps["dataset_0"].last_path == "refs/dataset_0.png"  # slot-stable key
     assert out.cost.image_calls == 1
     assert char.cost.image_calls == 1
 
@@ -172,6 +184,15 @@ def test_dataset_refresh_populates(bucket: Path, monkeypatch: pytest.MonkeyPatch
     upd = dict(zip(DATASET_REFRESH_KEYS, dataset_refresh(session), strict=True))
     assert upd["approve_btn"]["interactive"] is True
     assert upd["dataset_preview"]["value"] is not None
+
+
+def test_dataset_refresh_missing_file_no_preview(bucket: Path) -> None:
+    # last_path recorded but the file is gone (e.g. stale state on an ephemeral
+    # filesystem) → the is_file() guard collapses the preview to None.
+    session, char = _started(bucket, compositions=["walking"])
+    char.steps["dataset_0"] = StepRecord(last_path="refs/dataset_0.png")  # no file on disk
+    upd = dict(zip(DATASET_REFRESH_KEYS, dataset_refresh(session), strict=True))
+    assert upd["dataset_preview"]["value"] is None
 
 
 def test_finish_refresh_shows_samples(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:

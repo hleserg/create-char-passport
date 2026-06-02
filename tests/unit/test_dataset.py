@@ -104,7 +104,8 @@ def test_generate_frame_composition_outfit_and_refs(
     monkeypatch.setattr(generation, "generate_image", fake)
     result = dataset.generate_dataset_frame(state, 0)
     assert result.ok
-    assert state.steps["dataset_0"].last_path == "refs/full_body_walking_pose.png"
+    # Working file is keyed by the STABLE dataset_<idx>, not the editable slug.
+    assert state.steps["dataset_0"].last_path == "refs/dataset_0.png"
     call = fake.calls[0]
     assert call["roles"] == ["style", "face", "body"]  # identity refs
     assert "walking pose" in call["layers"]["composition"]
@@ -135,7 +136,59 @@ def test_regenerate_archives_previous(bucket: Path, monkeypatch: pytest.MonkeyPa
     dataset.generate_dataset_frame(state, 0)
     dataset.generate_dataset_frame(state, 0)  # regen
     rejected = character_dir(state.character_id) / REJECTED_DIR
-    assert list(rejected.glob("walking_attempt*.png"))  # archived by composition + attempt
+    # Archived under the stable slot key, exactly one frame per single regen.
+    assert [p.name for p in rejected.glob("dataset_0_attempt*.png")] == ["dataset_0_attempt1.png"]
+
+
+def test_edit_then_regenerate_archives_prior(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Editing the composition then regenerating still archives the prior frame
+    # (working file is slot-stable, so the regen archive always fires).
+    state = blank_state("Conan")
+    save_state(state)
+    _ready(state)
+    _with_compositions(state, ["walking"])
+    monkeypatch.setattr(generation, "generate_image", _Capture())
+    dataset.generate_dataset_frame(state, 0)
+    dataset.edit_composition(state, 0, "running")
+    dataset.generate_dataset_frame(state, 0)  # regen after edit
+    cdir = character_dir(state.character_id)
+    assert list((cdir / REJECTED_DIR).glob("dataset_0_attempt*.png"))  # prior frame archived
+    assert state.steps["dataset_0"].last_path == "refs/dataset_0.png"  # stable, no orphan
+
+
+def test_duplicate_compositions_get_distinct_files(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two compositions that slugify the same must not overwrite each other.
+    state = blank_state("Conan")
+    save_state(state)
+    _ready(state)
+    _with_compositions(state, ["walking", "walking"])
+    monkeypatch.setattr(generation, "generate_image", _Capture())
+    for i in range(2):
+        dataset.generate_dataset_frame(state, i)
+        dataset.approve_dataset_frame(state, i)
+    # Distinct working files (slot-keyed) and distinct approved files (deduped).
+    assert state.steps["dataset_0"].last_path != state.steps["dataset_1"].last_path
+    assert state.steps["dataset_0"].approved_path != state.steps["dataset_1"].approved_path
+    approved = character_dir(state.character_id) / APPROVED_DIR
+    assert len(list(approved.glob("*.png"))) == 2  # one artifact per frame, no overwrite
+    assert len(dataset.approved_samples(state)) == 2
+
+
+def test_reapprove_is_idempotent(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    state = blank_state("Conan")
+    save_state(state)
+    _ready(state)
+    _with_compositions(state, ["walking"])
+    monkeypatch.setattr(generation, "generate_image", _Capture())
+    dataset.generate_dataset_frame(state, 0)
+    assert dataset.approve_dataset_frame(state, 0) is True
+    first = state.steps["dataset_0"].approved_path
+    assert dataset.approve_dataset_frame(state, 0) is True  # re-approve
+    assert state.steps["dataset_0"].approved_path == first  # same file, no duplicate
+    approved = character_dir(state.character_id) / APPROVED_DIR
+    assert len(list(approved.glob("*.png"))) == 1
 
 
 def test_generate_frame_failure_no_step(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
