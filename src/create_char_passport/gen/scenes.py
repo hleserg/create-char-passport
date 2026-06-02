@@ -62,12 +62,16 @@ SCENE_LABELS: dict[str, str] = {
     SceneId.PROFILE_FULL: "Профиль, полный рост",
 }
 
-# Canonical COMPOSITION prompts (verbatim from plan/proekt_zametki.md §5).
-# Each is one logical paragraph; the model ignores line wrapping.
+# Canonical COMPOSITION prompts (from plan/proekt_zametki.md §5). Each is one
+# logical paragraph; the model ignores line wrapping. Strict layer separation:
+# COMPOSITION carries framing / background / lighting only and deliberately says
+# NOTHING about facial expression — that is owned solely by the EXPRESSION layer
+# (K3: neutral for passport, the emotion value for emotion frames). A "neutral
+# expression" clause here used to leak into emotion frames and dampen them.
 SCENE_PRESETS: dict[str, str] = {
     SceneId.FRONT_PORTRAIT: (
         "Front facing portrait, head and shoulders, plain neutral grey background, soft "
-        "even lighting, calm neutral expression, no harsh shadows, no blood, no dramatic "
+        "even lighting, no harsh shadows, no blood, no dramatic "
         "backlight, no text, no speech bubbles, no caption box, no panel border, no frame, "
         "no lettering, just the character on a clean background."
     ),
@@ -76,7 +80,7 @@ SCENE_PRESETS: dict[str, str] = {
         "fully inside the frame. Standing straight, both feet flat on the ground, legs and "
         "footwear clearly visible, empty space above the head and below the feet. Small "
         "figure in frame, camera pulled far back. Plain neutral grey background, soft even "
-        "lighting, neutral expression, arms relaxed at sides, no text, no panel border, "
+        "lighting, arms relaxed at sides, no text, no panel border, "
         "no frame, no lettering."
     ),
     SceneId.PROFILE_PORTRAIT: (
@@ -104,7 +108,7 @@ SCENE_PRESETS: dict[str, str] = {
         "below the feet, full figure framed with generous headroom and footroom. Small "
         "figure in frame, camera pulled far back, full body wide shot, no cropping, not a "
         "close-up, nothing cut off at the edges. Plain neutral grey background, soft even "
-        "lighting, neutral expression, arms relaxed at sides, no text, no panel border, "
+        "lighting, arms relaxed at sides, no text, no panel border, "
         "no frame, no lettering."
     ),
     SceneId.PROFILE_FULL: (
@@ -120,7 +124,7 @@ SCENE_PRESETS: dict[str, str] = {
         "Standing straight, both feet flat on the ground, legs and footwear visible. Clear "
         "empty margin above the head and below the feet, full body wide shot, camera "
         "pulled far back, full figure framed with generous headroom and footroom. Plain "
-        "neutral grey background, soft even lighting, neutral expression, arms relaxed at "
+        "neutral grey background, soft even lighting, arms relaxed at "
         "sides, no text, no panel border, no frame, no lettering. Not a three-quarter view, "
         "not facing the camera, face shown completely from the side."
     ),
