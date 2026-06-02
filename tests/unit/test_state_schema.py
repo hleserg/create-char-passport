@@ -9,6 +9,7 @@ from create_char_passport.state import (
     Emotions,
     OutfitDetail,
     OutfitEntry,
+    OutfitRefs,
     PromptLayers,
     PropEntry,
     PropShot,
@@ -56,6 +57,7 @@ def test_round_trip_full_state() -> None:
             id="armor",
             prompt="lamellar armor",
             complex=True,
+            refs=OutfitRefs(front_full="refs/of.png", front_full_approved=True),
             details=[OutfitDetail(prompt="pauldron", ref="refs/pauldron.png")],
         )
     ]
@@ -82,6 +84,9 @@ def test_round_trip_full_state() -> None:
     assert restored.character_table == {"sex": "female", "age": "30"}
     assert restored.emotions.enabled is True
     assert restored.outfits[0].complex is True
+    # The per-scene approved flags survive the round-trip (front True, back default).
+    assert restored.outfits[0].refs.front_full_approved is True
+    assert restored.outfits[0].refs.back_full_approved is False
     assert restored.outfits[0].details[0].prompt == "pauldron"
     assert restored.props[0].shots[0].what == "hilt"
     assert restored.prompt_layers.style == "grim comic"
@@ -96,6 +101,19 @@ def make_full_emotions() -> Emotions:
     emotions.items = [EmotionItem(value="neutral", ref="refs/neutral.png")]
     emotions.base_emotion = BaseEmotion(enabled=True, value="grim, brooding", ref=None)
     return emotions
+
+
+def test_outfit_refs_approved_defaults_false_for_legacy_state() -> None:
+    # A saved outfit from before the approved flags existed loads them as False
+    # (proves _outfit_entry parses the new keys, not silently drops them).
+    restored = state_from_dict(
+        {"character_id": "x", "outfits": [{"id": "1", "refs": {"front_full": "a.png"}}]}
+    )
+    refs = restored.outfits[0].refs
+    assert refs.front_full == "a.png"
+    assert refs.front_full_approved is False
+    assert refs.back_full_approved is False
+    assert refs.profile_full_approved is False
 
 
 def test_state_from_dict_tolerates_missing_optional_blocks() -> None:

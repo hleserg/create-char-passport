@@ -76,6 +76,13 @@ class WizardSession:
     # Transient UI flag: the emotions phase offers a "skip with an incomplete set"
     # button after Approve finds ungenerated emotions (the phase allows it, §5).
     emotions_offer_skip: bool = False
+    # Transient UI flag: ``(outfit_index, detail_n)`` whose delete needs a confirm
+    # (the costume detail already has a generation, §5); ``None`` when no pending
+    # delete. Cleared on confirm or any other outfit action.
+    outfit_pending_delete: tuple[int, int] | None = None
+    # Transient UI flag: Approve found a costume detail with a prompt but no
+    # generation (§5) — a second Approve proceeds (details persist, nothing lost).
+    outfit_pending_approve_confirm: bool = False
     notice: str = ""
     # Running API spend for the whole session (incl. pre-character calls like
     # extraction); the per-character figure lives on ``character.cost``.

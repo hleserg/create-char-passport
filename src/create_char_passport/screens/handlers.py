@@ -14,7 +14,7 @@ unit-tested by direct calls; the only thing left to the (test-covered)
 
 from __future__ import annotations
 
-from create_char_passport.gen import clear_scene_override, set_scene_override
+from create_char_passport.gen import SceneId, clear_scene_override, set_scene_override
 from create_char_passport.screens.router import (
     ScreenId,
     WizardSession,
@@ -44,6 +44,19 @@ from create_char_passport.wizard.forms import (
     set_props_enabled,
     sync_outfits,
     sync_props,
+)
+from create_char_passport.wizard.outfits import (
+    add_outfit_detail,
+    adjacent_outfit_step,
+    approve_outfit,
+    current_outfit_index,
+    delete_outfit_detail,
+    detail_has_generation,
+    first_outfit_step,
+    generate_outfit_detail,
+    generate_outfit_scene,
+    required_scenes_present,
+    set_outfit_complex,
 )
 from create_char_passport.wizard.passport import (
     all_passport_approved,
@@ -529,6 +542,227 @@ def on_emotions_back(session: WizardSession) -> WizardSession:
     """Step back from the emotions phase (to the passport)."""
     session.emotions_offer_skip = False
     session.current_screen = previous_screen(session)
+    _persist(session)
+    return session
+
+
+# --------------------------------------------------------------------------- #
+# Outfits phase (optional) — one additional outfit at a time (window 5, §5)
+# --------------------------------------------------------------------------- #
+def _current_outfit(session: WizardSession) -> tuple[CharacterState, int] | None:
+    """The character + cursor outfit index, or ``None`` (no character / no outfit)."""
+    state = session.character
+    if state is None:
+        return None
+    index = current_outfit_index(state)
+    return (state, index) if index is not None else None
+
+
+def on_enter_outfits(session: WizardSession) -> WizardSession:
+    """Mark the outfits phase: cursor → the first outfit, unless already on one.
+
+    Arriving from an earlier phase (cursor on a passport/emotion step) seeds the
+    first additional outfit; a resumed cursor already on an outfit is preserved.
+    """
+    state = session.character
+    if state is not None and session.current_screen is ScreenId.OUTFITS:
+        session.outfit_pending_delete = None
+        session.outfit_pending_approve_confirm = False
+        if state.outfits_enabled and current_outfit_index(state) is None:
+            first = first_outfit_step(state)
+            if first is not None:
+                state.current_step = first
+        session.notice = ""
+        _persist(session)
+    return session
+
+
+def on_outfit_prompt_edit(session: WizardSession, prompt: str) -> WizardSession:
+    """Sync the editable clothing-prompt field back into the cursor outfit."""
+    found = _current_outfit(session)
+    if found is not None:
+        state, index = found
+        state.outfits[index].prompt = prompt.strip()
+        _persist(session)
+    return session
+
+
+def on_outfit_detail_prompt_edit(session: WizardSession, prompt: str, *, j: int) -> WizardSession:
+    """Persist an edited costume-detail prompt (cell ``j``, 0-based) into state.
+
+    ``j`` is keyword-only so the Gradio wiring can bind it via ``partial`` while
+    the live textbox value rides in as the positional ``prompt`` input.
+    """
+    found = _current_outfit(session)
+    if found is not None:
+        state, index = found
+        details = state.outfits[index].details
+        if 0 <= j < len(details):
+            details[j].prompt = prompt.strip()
+            _persist(session)
+    return session
+
+
+def on_toggle_outfit_complex(session: WizardSession, complex_: bool) -> WizardSession:
+    """Toggle the cursor outfit's "complex" flag (adds/hides profile + details)."""
+    found = _current_outfit(session)
+    if found is not None:
+        state, index = found
+        session.outfit_pending_delete = None  # an unrelated action dismisses a pending delete
+        set_outfit_complex(state, index, complex_)
+        _persist(session)
+    return session
+
+
+def on_outfit_scene_generate(session: WizardSession, scene_id: SceneId) -> WizardSession:
+    """Generate one full-length scene for the cursor outfit and bill the call."""
+    found = _current_outfit(session)
+    if found is None:
+        return session
+    state, index = found
+    session.outfit_pending_delete = None
+    meter = CostLedger()
+    result = generate_outfit_scene(state, index, scene_id, meter=meter)
+    session.notice = (
+        "Сцена готова."
+        if result.ok
+        else (result.error or "Не удалось сгенерировать. Попробуй ещё раз — промт сохранён.")
+    )
+    _attribute_cost(session, meter)
+    return session
+
+
+def on_outfit_scene_approve_toggle(
+    session: WizardSession, scene_id: SceneId, approved: bool
+) -> WizardSession:
+    """Set a scene's per-preview "approved" flag (optimization-only, never gates)."""
+    found = _current_outfit(session)
+    if found is not None:
+        state, index = found
+        attr = {
+            SceneId.FRONT_FULL: "front_full",
+            SceneId.BACK_FULL: "back_full",
+            SceneId.PROFILE_FULL: "profile_full",
+        }[scene_id]
+        setattr(state.outfits[index].refs, f"{attr}_approved", bool(approved))
+        _persist(session)
+    return session
+
+
+def on_outfit_detail_generate(session: WizardSession, j: int) -> WizardSession:
+    """Generate costume-detail cell ``j`` (0-based) for the cursor outfit.
+
+    The detail's prompt is persisted by :func:`on_outfit_detail_prompt_edit` (the
+    textbox ``.blur`` fires before this click), so the stored text is used here.
+    """
+    found = _current_outfit(session)
+    if found is None:
+        return session
+    state, index = found
+    n = j + 1
+    details = state.outfits[index].details
+    if not 1 <= n <= len(details):
+        return session
+    session.outfit_pending_delete = None
+    meter = CostLedger()
+    result = generate_outfit_detail(state, index, n, meter=meter)
+    session.notice = (
+        "Деталь готова." if result.ok else (result.error or "Не удалось сгенерировать деталь.")
+    )
+    _attribute_cost(session, meter)
+    return session
+
+
+def on_outfit_add_detail(session: WizardSession) -> WizardSession:
+    """Append an empty costume-detail slot to the cursor outfit (capped)."""
+    found = _current_outfit(session)
+    if found is not None:
+        state, index = found
+        session.outfit_pending_delete = None
+        add_outfit_detail(state, index)
+        _persist(session)
+    return session
+
+
+def on_outfit_delete_detail(session: WizardSession, j: int) -> WizardSession:
+    """Delete detail ``j`` (0-based); a generated detail first asks to confirm (§5)."""
+    found = _current_outfit(session)
+    if found is None:
+        return session
+    state, index = found
+    n = j + 1
+    if detail_has_generation(state, index, n):
+        session.outfit_pending_delete = (index, n)  # reveal the confirm button
+        session.notice = "У детали есть генерация — подтверди удаление."
+        return session
+    delete_outfit_detail(state, index, n)
+    session.outfit_pending_delete = None
+    _persist(session)
+    return session
+
+
+def on_outfit_delete_detail_confirmed(session: WizardSession, j: int) -> WizardSession:
+    """Confirm deletion of a generated costume detail."""
+    found = _current_outfit(session)
+    if found is not None:
+        state, index = found
+        delete_outfit_detail(state, index, j + 1)
+    session.outfit_pending_delete = None
+    _persist(session)
+    return session
+
+
+def on_approve_outfit(session: WizardSession) -> WizardSession:
+    """Approve the cursor outfit (gated on required scenes) → next outfit or phase."""
+    found = _current_outfit(session)
+    if found is None:
+        return session
+    state, index = found
+    outfit = state.outfits[index]
+    session.outfit_pending_delete = None
+    if not required_scenes_present(outfit):
+        session.notice = "Сгенерируй обязательные сцены наряда (фас + спина" + (
+            " + профиль)." if outfit.complex else ")."
+        )
+        return session
+    # A detail with a prompt but no generation → ask once (§5). A second Approve
+    # proceeds; details persist (nothing is deleted), so this is a soft confirm.
+    has_pending_detail = any(d.prompt.strip() and not d.ref for d in outfit.details)
+    if has_pending_detail and not session.outfit_pending_approve_confirm:
+        session.outfit_pending_approve_confirm = True
+        session.notice = (
+            "Есть деталь с промтом без генерации. Сгенерируй её или нажми "
+            "«Согласовать наряд» ещё раз, чтобы продолжить."
+        )
+        return session
+    session.outfit_pending_approve_confirm = False
+    approve_outfit(state, index)  # required scenes present → marks approved + active
+    nxt = adjacent_outfit_step(state, index, forward=True)
+    if nxt is not None:
+        state.current_step = nxt  # next outfit, stay on the screen
+        session.notice = "Наряд согласован — следующий наряд."
+    else:
+        session.current_screen = next_screen(session)  # phase done
+        session.notice = ""
+    _persist(session)
+    return session
+
+
+def on_outfits_back(session: WizardSession) -> WizardSession:
+    """Step back: previous outfit, or out of the phase from the first outfit."""
+    session.outfit_pending_delete = None
+    session.outfit_pending_approve_confirm = False
+    found = _current_outfit(session)
+    if found is None:
+        session.current_screen = previous_screen(session)
+        _persist(session)
+        return session
+    state, index = found
+    prev = adjacent_outfit_step(state, index, forward=False)
+    if prev is not None:
+        state.current_step = prev
+    else:
+        session.current_screen = previous_screen(session)
     _persist(session)
     return session
 

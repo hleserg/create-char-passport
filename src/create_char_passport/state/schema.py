@@ -93,11 +93,21 @@ class BaseOutfit:
 
 @dataclass(slots=True)
 class OutfitRefs:
-    """Approved outfit references by scene. Optional fields stay ``None``."""
+    """Outfit references by scene. Optional path fields stay ``None``.
+
+    Each ``<scene>`` path is the single ref for that scene — it is both the
+    last generation (drives the preview and the "approve outfit" gate by mere
+    presence) and the approved ref. The ``<scene>_approved`` booleans are an
+    *optimization* flag only: an approved scene is skipped on a bulk regenerate.
+    They never gate approval (§5: the checkbox affects optimization only).
+    """
 
     front_full: str | None = None
     back_full: str | None = None
     profile_full: str | None = None
+    front_full_approved: bool = False
+    back_full_approved: bool = False
+    profile_full_approved: bool = False
 
 
 @dataclass(slots=True)
@@ -275,6 +285,9 @@ def _outfit_entry(data: dict[str, Any]) -> OutfitEntry:
             front_full=refs_data.get("front_full"),
             back_full=refs_data.get("back_full"),
             profile_full=refs_data.get("profile_full"),
+            front_full_approved=bool(refs_data.get("front_full_approved", False)),
+            back_full_approved=bool(refs_data.get("back_full_approved", False)),
+            profile_full_approved=bool(refs_data.get("profile_full_approved", False)),
         ),
         details=[
             OutfitDetail(prompt=d.get("prompt", ""), ref=d.get("ref"))
