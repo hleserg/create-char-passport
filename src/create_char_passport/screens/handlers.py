@@ -1045,13 +1045,17 @@ def on_export_lora(session: WizardSession) -> tuple[str | None, str]:
     state = session.character
     if state is None:
         return None, ""
-    zip_path, count = export_lora_zip(state)
+    zip_path, result = export_lora_zip(state)
     if zip_path is None:
         return None, "Нет утверждённых кадров для экспорта — сначала собери датасет."
-    return zip_path, (
-        f"Готово: {count} кадр(ов) с контент-подписями (триггер `{default_trigger(state)}`). "
-        "Формат подписей и триггер — предварительные (HLE-802), уточним под обучение LoRA."
+    trig = default_trigger(state)
+    note = (
+        f"Готово: {result.count} кадр(ов), триггер `{trig}`. "
+        "Контент-подписи без стиля; формат и триггер предварительные (HLE-802)."
     )
+    if result.skipped:
+        note += f" Пропущено {result.skipped} (файл не найден на диске)."
+    return zip_path, note
 
 
 def _rows(rows: object) -> list[list[object]]:

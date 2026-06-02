@@ -108,9 +108,12 @@ def test_content_caption_trigger_only_when_no_content() -> None:
     assert content_caption(PromptLayers(style=_STYLE_MARKER), "conan_char") == "conan_char"
 
 
-def test_content_caption_no_trigger_no_dangling_comma() -> None:
-    layers = PromptLayers(face="rugged barbarian")
-    assert content_caption(layers, "  ") == "rugged barbarian"
+def test_content_caption_collapses_interior_whitespace() -> None:
+    # An embedded newline / double space must never reach the single-line sidecar.
+    layers = PromptLayers(face="rugged   barbarian", composition="full body,\nwalking")
+    assert (
+        content_caption(layers, "conan_char") == "conan_char, rugged barbarian, full body, walking"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -120,11 +123,13 @@ def test_export_collects_whole_golden_set(bucket: Path, monkeypatch: pytest.Monk
     state = blank_state("Conan")
     save_state(state)
     _identity_ready(state)
-    # base emotion + one series emotion
+    # base emotion + one series emotion (both blocks enabled)
     state.emotions.enabled = True
+    state.emotions.base_emotion.enabled = True
     state.emotions.base_emotion.ref = _write_ref(state, "refs/base_emotion.png")
     state.emotions.items[0].ref = _write_ref(state, "refs/emotion_0.png")
     # one outfit with front + back scenes
+    state.outfits_enabled = True
     state.outfits.append(
         OutfitEntry(
             id="1",
@@ -143,11 +148,10 @@ def test_export_collects_whole_golden_set(bucket: Path, monkeypatch: pytest.Monk
     assert result.count == 8
     assert len(list(out.glob("*.png"))) == 8
     assert len(list(out.glob("*.txt"))) == 8
-    # STYLE never leaks into ANY caption.
-    for txt in out.glob("*.txt"):
-        assert _STYLE_MARKER not in txt.read_text(encoding="utf-8")
-    # The two outfit scenes are distinguished by their framing angle.
     captions = [t.read_text(encoding="utf-8") for t in sorted(out.glob("*.txt"))]
+    # STYLE never leaks into ANY caption.
+    assert all(_STYLE_MARKER not in c for c in captions)
+    # The two outfit scenes are distinguished by their framing angle.
     assert any("back view" in c for c in captions)
     assert any("battered leather armor" in c for c in captions)
     # A dataset composition is captioned with its pose.
@@ -158,8 +162,8 @@ def test_export_excludes_props_and_details(bucket: Path, monkeypatch: pytest.Mon
     state = blank_state("Conan")
     save_state(state)
     _identity_ready(state)
-    # A prop shot (no character) and an outfit-detail macro (face blanked) — both
-    # must be excluded from a char-LoRA set.
+    # A prop shot (no character) — must be excluded from a char-LoRA set.
+    state.props_enabled = True
     state.props.append(
         PropEntry(
             id="1",
@@ -173,6 +177,96 @@ def test_export_excludes_props_and_details(bucket: Path, monkeypatch: pytest.Mon
     result = export_lora_dataset(state, bucket / "out")
     # 2 passport + 1 dataset = 3; prop is NOT counted.
     assert result.count == 3
+
+
+def test_export_excludes_disabled_blocks(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Refs from a block the user turned OFF must not be exported (mirrors the
+    # canonical pipeline enumerator, which gates on the enabled flags).
+    state = blank_state("Conan")
+    save_state(state)
+    _identity_ready(state)
+    state.emotions.enabled = False
+    state.emotions.base_emotion.enabled = False
+    state.emotions.base_emotion.ref = _write_ref(state, "refs/base_emotion.png")
+    state.emotions.items[0].ref = _write_ref(state, "refs/emotion_0.png")
+    state.outfits_enabled = False
+    state.outfits.append(
+        OutfitEntry(
+            id="1", prompt="armor", refs=OutfitRefs(front_full=_write_ref(state, "refs/o.png"))
+        )
+    )
+    _approved_dataset(state, ["walking"], monkeypatch)
+    result = export_lora_dataset(state, bucket / "out")
+    assert result.count == 3  # only 2 passport + 1 dataset; disabled emotion/outfit refs skipped
+
+
+def test_emotion_caption_uses_base_outfit_not_active(bucket: Path) -> None:
+    # Emotion portraits are shot in the BASE outfit; their caption must reflect
+    # that, not whatever outfit is active at export time (active drifts past base
+    # once the outfits phase runs).
+    state = blank_state("Conan")
+    save_state(state)
+    state.base_outfit.prompt = "simple brown tunic"
+    state.prompt_layers.face = "rugged barbarian"
+    state.emotions.enabled = True
+    state.emotions.base_emotion.enabled = True
+    state.emotions.base_emotion.value = "angry"
+    state.emotions.base_emotion.ref = _write_ref(state, "refs/base_emotion.png")
+    # Simulate post-outfits navigation: a non-base outfit is active.
+    state.outfits.append(OutfitEntry(id="1", prompt="battered leather armor"))
+    state.active_outfit_id = "1"
+
+    out = bucket / "out"
+    export_lora_dataset(state, out)
+    captions = [t.read_text(encoding="utf-8") for t in out.glob("*.txt")]
+    assert any("simple brown tunic" in c for c in captions)  # base outfit = ground truth
+    assert all("battered leather armor" not in c for c in captions)  # active outfit must NOT leak
+
+
+def test_passport_caption_strips_generation_negatives(bucket: Path) -> None:
+    # The stored composition is the full generation prompt (with "no text, no
+    # panel border" negatives). A trainer reads negatives as positive tokens, so
+    # the caption must carry a short clean framing instead.
+    state = blank_state("Conan")
+    save_state(state)
+    verbose = (
+        "Front facing portrait, head and shoulders, plain neutral grey background, "
+        "no text, no speech bubbles, no panel border, no frame, no lettering"
+    )
+    _write_ref(state, "refs/passport_face.png")
+    state.steps["passport_face"] = StepRecord(
+        last_path="refs/passport_face.png",
+        approved_path="refs/passport_face.png",
+        prompt_layers=PromptLayers(
+            style=_STYLE_MARKER, face="rugged barbarian", composition=verbose
+        ),
+    )
+    out = bucket / "out"
+    export_lora_dataset(state, out)
+    caption = (out / "000.txt").read_text(encoding="utf-8")
+    assert "no text" not in caption
+    assert "no panel" not in caption
+    assert "front view" in caption  # short clean framing substituted
+    assert _STYLE_MARKER not in caption
+
+
+def test_dataset_caption_is_clean_single_line(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = blank_state("Conan")
+    save_state(state)
+    _identity_ready(state)
+    _approved_dataset(state, ["full body, walking pose, seen from the front"], monkeypatch)
+    out = bucket / "out"
+    export_lora_dataset(state, out)
+    caption = next(
+        t.read_text(encoding="utf-8")
+        for t in out.glob("*.txt")
+        if "walking pose" in t.read_text("utf-8")
+    )
+    assert "\n" not in caption  # single line
+    assert "neutral grey background" not in caption  # BACKGROUND_DIRECTIVE stripped
+    assert "no panel border" not in caption
 
 
 def test_export_skips_unapproved_dataset(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -189,13 +283,31 @@ def test_export_skips_unapproved_dataset(bucket: Path, monkeypatch: pytest.Monke
     assert result.count == 3
 
 
-def test_export_zip_returns_path_and_count(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_export_counts_missing_files_as_skipped(bucket: Path) -> None:
+    # A frame collected from state whose image is gone on disk is counted, not
+    # silently dropped, so a partial export is distinguishable from a complete one.
+    state = blank_state("Conan")
+    save_state(state)
+    _write_ref(state, "refs/passport_face.png")
+    state.steps["passport_face"] = StepRecord(
+        last_path="refs/passport_face.png", approved_path="refs/passport_face.png"
+    )
+    # passport_body approved in state but the file was never written.
+    state.steps["passport_body"] = StepRecord(
+        last_path="refs/passport_body.png", approved_path="refs/passport_body.png"
+    )
+    result = export_lora_dataset(state, bucket / "out")
+    assert result.count == 1
+    assert result.skipped == 1
+
+
+def test_export_zip_returns_path_and_result(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     state = blank_state("Conan")
     save_state(state)
     _identity_ready(state)
     _approved_dataset(state, ["walking"], monkeypatch)
-    zip_path, count = export_lora_zip(state)
-    assert count == 3  # 2 passport + 1 dataset
+    zip_path, result = export_lora_zip(state)
+    assert result.count == 3  # 2 passport + 1 dataset
     assert zip_path is not None
     assert Path(zip_path).is_file()
     assert zip_path.endswith(".zip")
@@ -217,9 +329,9 @@ def test_export_zip_rebuilds_staging(bucket: Path, monkeypatch: pytest.MonkeyPat
 def test_export_zip_none_when_nothing_approved(bucket: Path) -> None:
     state = blank_state("Conan")
     save_state(state)
-    zip_path, count = export_lora_zip(state)
+    zip_path, result = export_lora_zip(state)
     assert zip_path is None
-    assert count == 0
+    assert result.count == 0
 
 
 # --------------------------------------------------------------------------- #
