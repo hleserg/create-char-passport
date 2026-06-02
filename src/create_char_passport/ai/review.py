@@ -41,7 +41,7 @@ from create_char_passport.state.steps import DATASET_PREFIX
 from create_char_passport.wizard.dataset import edit_composition
 from create_char_passport.wizard.forms import set_base_emotion
 from create_char_passport.wizard.outfits import set_outfit_detail_prompt, set_outfit_prompt
-from create_char_passport.wizard.passport import apply_layer_edit
+from create_char_passport.wizard.passport import apply_layer_edit, editable_layers
 from create_char_passport.wizard.props import set_prop_shot_prompt
 
 # Signature of the injectable LLM call (matches gen.call_llm's public surface).
@@ -313,11 +313,16 @@ def apply_step_prompt(state: CharacterState, step_key: str, new_prompt: str) -> 
     kind = classify_step(step_key)
     text = new_prompt.strip()
     if kind is StepKind.PASSPORT:
-        if step_key == "passport_body":
+        # FACE/BODY only on their own frame; a frozen frame (profile/back/3q has
+        # no editable layer) is a true no-op → report False, not a phantom write.
+        editable = editable_layers(step_key)
+        if step_key == "passport_body" and "body" in editable:
             apply_layer_edit(state, step_key, body=text)
-        else:
+            return True
+        if "face" in editable:
             apply_layer_edit(state, step_key, face=text)
-        return True
+            return True
+        return False
     if kind is StepKind.BASE_EMOTION:
         set_base_emotion(state, state.emotions.base_emotion.enabled, text)
         return True

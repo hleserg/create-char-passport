@@ -1083,10 +1083,12 @@ def on_export_lora(session: WizardSession) -> tuple[str | None, str]:
 def enforce_regen_gate(session: WizardSession) -> WizardSession:
     """Redirect to the earliest step flagged ``need_regen`` before a forward move.
 
-    Wired after every forward transition (and before the repaint chain): when an
-    accepted AI-edit raised ``need_regen`` on an earlier step, jump the cursor +
-    screen there so the user must re-do it. The flag is cleared when that step is
-    regenerated or (re)approved. No-op when nothing is flagged.
+    Wired after the forward transitions from the two screens that carry «Правка с
+    ИИ» — passport-forward and dataset-approve — since those are the only paths
+    where an accepted edit can have just flagged an earlier step; it runs before
+    the repaint chain so the jump repaints for free. When a flag is set, jump the
+    cursor + screen to that step so the user must re-do it. The flag clears when
+    that step is regenerated or (re)approved (§Г). No-op when nothing is flagged.
     """
     state = session.character
     if state is None:

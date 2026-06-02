@@ -236,6 +236,18 @@ def test_apply_step_prompt_prop_and_dataset() -> None:
     assert state.dataset_compositions[0] == "full body, crouching"
 
 
+def test_apply_step_prompt_frozen_passport_frame_returns_false() -> None:
+    # A frozen passport frame (profile/back/3q) has no editable layer → a true
+    # no-op, reported as False (not a phantom write that clobbers FACE).
+    state = blank_state("Conan")
+    state.prompt_layers.face = "original identity"
+    assert apply_step_prompt(state, "passport_profile", "should not write") is False
+    assert state.prompt_layers.face == "original identity"
+    # FACE/BODY frames still write and report True.
+    assert apply_step_prompt(state, "passport_face", "rugged jaw") is True
+    assert state.prompt_layers.face == "rugged jaw"
+
+
 def test_apply_step_prompt_emotion_series_is_noop() -> None:
     # Rewriting an emotion label would re-key the step — refuse it.
     state = blank_state("Conan")
