@@ -131,6 +131,12 @@ def generate_outfit_scene(
             state.steps[outfit_step(outfit.id)] = StepRecord(
                 last_path=relative, prompt_layers=to_prompt_layers(layers)
             )
+        # §Г: regenerating ANY scene clears the AI-edit gate (front-full replaces
+        # the record above; back/profile clear it on the existing record), so the
+        # gate never re-redirects after a back/profile-only regen.
+        existing = state.steps.get(outfit_step(outfit.id))
+        if existing is not None:
+            existing.need_regen = False
     return result
 
 

@@ -80,6 +80,24 @@ def test_dataset_approve_clears_need_regen(bucket: Path, monkeypatch: pytest.Mon
     assert state.steps["dataset_0"].need_regen is False
 
 
+def test_outfit_back_scene_regen_clears_need_regen(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regenerating ANY scene (not just front-full) clears the gate flag, so a
+    # back/profile-only regen doesn't re-redirect (§Г papercut fix).
+    from create_char_passport.gen import SceneId
+
+    monkeypatch.setattr(generation, "generate_image", _fake_ok)
+    state = blank_state("Conan")
+    save_state(state)
+    _ready(state)
+    state.outfits_enabled = True
+    state.outfits.append(OutfitEntry(id="1", prompt="armor"))
+    state.steps["outfit_1"] = StepRecord(last_path="refs/x.png", need_regen=True)
+    outfits.generate_outfit_scene(state, 0, SceneId.BACK_FULL)
+    assert state.steps["outfit_1"].need_regen is False
+
+
 def test_outfit_approve_clears_need_regen(bucket: Path) -> None:
     state = blank_state("Conan")
     save_state(state)

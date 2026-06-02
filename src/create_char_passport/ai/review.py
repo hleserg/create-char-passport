@@ -49,7 +49,10 @@ LlmCall = Callable[..., str]
 
 _BRACE_RE = re.compile(r"\{(.*?)\}", re.DOTALL)
 _SQUARE_RE = re.compile(r"\[(.*?)\]", re.DOTALL)
-_MARKER_RE = re.compile(r"&([^&\n]+)&")
+# Step keys are lower-case ``[a-z0-9_]`` only (passport_face, outfit_1, dataset_0,
+# emotion_<slug>, …). A strict key class means a literal ``&`` inside a proposed
+# prompt (e.g. "black & white") can't be mistaken for a block delimiter.
+_MARKER_RE = re.compile(r"&([a-z0-9_]+)&")
 
 NO_RESPONSE = "ИИ не ответил — попробуйте ещё раз."
 UNEXPECTED = "ИИ вернул ответ в неожиданном формате — попробуйте ещё раз."
@@ -147,7 +150,10 @@ def parse_check_reply(text: str) -> tuple[str | None, str | None]:
     """
     brace = _BRACE_RE.search(text)
     justification = brace.group(1).strip() if brace else None
-    square = _SQUARE_RE.search(text)
+    # Search for the prompt AFTER the justification closes, so a "[...]" living
+    # inside the {justification} (free prose may contain brackets) is never taken
+    # as the proposed prompt — the grammar is `{justification}[prompt]`.
+    square = _SQUARE_RE.search(text, brace.end() if brace else 0)
     new_prompt = square.group(1).strip() if square else None
     return justification or None, new_prompt or None
 

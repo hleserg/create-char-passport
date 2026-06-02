@@ -27,7 +27,7 @@ def test_passport_screen_has_both_ai_slots() -> None:
     assert handle.ai_check.kind is AISlotKind.CHECK
     assert isinstance(handle.ai_edit, AIEditSlot)
     assert handle.ai_edit.kind is AISlotKind.EDIT
-    assert handle.ai_check.context.step_key == "passport_face"
+    assert handle.ai_check.context.step_key == "passport_step"  # cursor-resolved (HLE-731)
     assert handle.prompt is not None
 
 

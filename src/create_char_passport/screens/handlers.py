@@ -1104,18 +1104,29 @@ def enforce_regen_gate(session: WizardSession) -> WizardSession:
 # --------------------------------------------------------------------------- #
 # "Проверить с ИИ" — per-step check (HLE-731 §А)
 # --------------------------------------------------------------------------- #
-_CHECK_PLACEHOLDERS = {"outfit_step", "outfit_detail_step", "prop_shot_step", "dataset_step"}
+_CHECK_PLACEHOLDERS = {
+    "passport_step",
+    "outfit_step",
+    "outfit_detail_step",
+    "prop_shot_step",
+    "dataset_step",
+}
 
 
 def _resolve_check_key(state: CharacterState, slot_key: str, index: int | None) -> str | None:
     """Map a slot's (possibly placeholder) key to the REAL step under the cursor.
 
-    Single-cursor parametric slots (outfit / dataset) resolve from the active
-    cursor; per-cell slots (outfit detail, prop shot) use the baked ``index``.
-    Returns ``None`` when there is no active entry (nothing to check yet).
+    The passport screen walks 5 frames through one slot, so ``passport_step``
+    resolves to the visible frame (else a check/accept on frame 2-5 would target —
+    and could clobber — the frozen FACE layer). Single-cursor parametric slots
+    (outfit / dataset) resolve from the active cursor; per-cell slots (outfit
+    detail, prop shot) use the baked ``index``. ``None`` when there is no active
+    entry (nothing to check yet).
     """
     if slot_key not in _CHECK_PLACEHOLDERS:
-        return slot_key  # already a real key (passport_face, base_emotion)
+        return slot_key  # already a real key (base_emotion)
+    if slot_key == "passport_step":
+        return current_passport_step(state)
     if slot_key == "dataset_step":
         idx = current_dataset_index(state)
         return dataset_step(idx) if idx is not None else None

@@ -86,6 +86,35 @@ def test_resolve_check_key_real_and_placeholders(bucket: Path) -> None:
     assert handlers._resolve_check_key(state, "outfit_detail_step", 0) == "outfit_7_detail_1"
 
 
+def test_resolve_passport_step_follows_cursor(bucket: Path) -> None:
+    state = blank_state("Conan")
+    state.current_step = "passport_body"
+    assert handlers._resolve_check_key(state, "passport_step", None) == "passport_body"
+
+
+def test_accept_passport_check_writes_visible_frame_not_face(bucket: Path) -> None:
+    # On the BODY frame, accept writes BODY (not FACE).
+    state = blank_state("Conan")
+    state.current_step = "passport_body"
+    save_state(state)
+    session = WizardSession(character=state)
+    handlers.accept_ai_check(session, "passport_step", None, "tall, muscular")
+    assert state.prompt_layers.body == "tall, muscular"
+    assert state.prompt_layers.face == ""  # FACE untouched
+
+
+def test_accept_passport_check_frozen_frame_does_not_clobber_face(bucket: Path) -> None:
+    # On a frozen frame (profile/back/3q have no editable layers) accept must be a
+    # no-op — never overwrite the frozen FACE identity.
+    state = blank_state("Conan")
+    state.prompt_layers.face = "original identity"
+    state.current_step = "passport_profile"
+    save_state(state)
+    session = WizardSession(character=state)
+    handlers.accept_ai_check(session, "passport_step", None, "SHOULD NOT WRITE")
+    assert state.prompt_layers.face == "original identity"
+
+
 def test_resolve_check_key_no_cursor_is_none(bucket: Path) -> None:
     state = blank_state("Conan")
     assert handlers._resolve_check_key(state, "dataset_step", None) is None

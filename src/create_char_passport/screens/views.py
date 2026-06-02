@@ -325,7 +325,9 @@ def render_passport() -> ScreenHandle:
         )
 
         prompt = components["face_box"]
-        ai_check = build_ai_check_slot("passport_face", prompt)
+        # ``passport_step`` (not the literal frame) so check/accept follow the
+        # visible frame across the 5-frame cursor — never clobber a frozen layer.
+        ai_check = build_ai_check_slot("passport_step", prompt)
         ai_edit = build_ai_edit_slot("passport_face", prompt)
 
         with gr.Row():

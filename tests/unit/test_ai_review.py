@@ -73,6 +73,21 @@ def test_parse_edit_reply_no_markers() -> None:
     assert parse_edit_reply("everything looks fine", {"passport_face"}) == []
 
 
+def test_parse_check_reply_bracket_inside_justification() -> None:
+    # A "[...]" inside the {justification} prose must not be taken as the prompt.
+    just, prompt = parse_check_reply("{добавь [шрам] на щеку}[rugged face, scar on cheek]")
+    assert just == "добавь [шрам] на щеку"
+    assert prompt == "rugged face, scar on cheek"
+
+
+def test_parse_edit_reply_ampersand_in_prompt() -> None:
+    # A literal "&" inside a proposed prompt must not break block delimiting.
+    text = "&passport_face&{ч/б}[black & white face]&dataset_0&{поза}[full body, running]"
+    blocks = parse_edit_reply(text, {"passport_face", "dataset_0"})
+    assert [b.step_key for b in blocks] == ["passport_face", "dataset_0"]
+    assert blocks[0].new_prompt == "black & white face"
+
+
 # --------------------------------------------------------------------------- #
 # check_step
 # --------------------------------------------------------------------------- #
