@@ -1,4 +1,4 @@
-"""Tests for the LoRA-ready dataset export (HLE-805, epic HLE-802)."""
+"""Tests for the LoRA-ready golden-set export (HLE-805, epic HLE-802)."""
 
 from __future__ import annotations
 
@@ -11,8 +11,16 @@ from create_char_passport.config import get_settings
 from create_char_passport.gen import GenerationResult
 from create_char_passport.screens import handlers
 from create_char_passport.screens.router import ScreenId, WizardSession
-from create_char_passport.state import PromptLayers, StepRecord, blank_state
-from create_char_passport.storage import character_dir, save_state
+from create_char_passport.state import (
+    OutfitEntry,
+    OutfitRefs,
+    PromptLayers,
+    PropEntry,
+    PropShot,
+    StepRecord,
+    blank_state,
+)
+from create_char_passport.storage import character_asset, character_dir, save_state
 from create_char_passport.wizard import dataset, generation
 from create_char_passport.wizard.export import (
     content_caption,
@@ -36,21 +44,31 @@ def _fake_ok(prompt_layers, refs, outfit_conflict=False, *, output_path, model=N
     return GenerationResult(image_path=str(output_path), ok=True)
 
 
-def _ready(state) -> None:
-    """Approve passport face+body + style ref so identity refs are complete."""
-    cdir = character_dir(state.character_id)
+def _write_ref(state, rel: str) -> str:
+    """Create a stub image at a relative path inside the character bucket."""
+    path = character_asset(state.character_id, rel)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"img")
+    return rel
+
+
+def _identity_ready(state) -> None:
+    """Approve passport face+body + style ref so dataset identity refs exist."""
     for key in ("passport_face", "passport_body"):
-        (cdir / f"refs/{key}.png").write_bytes(b"img")
-        state.steps[key] = StepRecord(last_path=f"refs/{key}.png", approved_path=f"refs/{key}.png")
-    (cdir / "refs/style.png").write_bytes(b"style")
+        _write_ref(state, f"refs/{key}.png")
+        state.steps[key] = StepRecord(
+            last_path=f"refs/{key}.png",
+            approved_path=f"refs/{key}.png",
+            prompt_layers=PromptLayers(style=_STYLE_MARKER, face="rugged barbarian", body="tall"),
+        )
+    _write_ref(state, "refs/style.png")
     state.style_ref = "refs/style.png"
-
-
-def _with_dataset(state, compositions: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
-    """Generate + approve every composition so the approved/ archive is populated."""
-    monkeypatch.setattr(generation, "generate_image", _fake_ok)
     state.prompt_layers.style = _STYLE_MARKER
-    state.prompt_layers.face = "a rugged barbarian, blue eyes"
+    state.prompt_layers.face = "rugged barbarian, blue eyes"
+
+
+def _approved_dataset(state, compositions: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(generation, "generate_image", _fake_ok)
     state.dataset_compositions = list(compositions)
     for i in range(len(compositions)):
         dataset.generate_dataset_frame(state, i)
@@ -96,48 +114,88 @@ def test_content_caption_no_trigger_no_dangling_comma() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Dataset staging
+# Golden-set collection
 # --------------------------------------------------------------------------- #
-def test_export_writes_image_and_content_caption(
-    bucket: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_export_collects_whole_golden_set(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     state = blank_state("Conan")
     save_state(state)
-    _ready(state)
-    _with_dataset(state, ["full body, walking pose", "head and shoulders"], monkeypatch)
+    _identity_ready(state)
+    # base emotion + one series emotion
+    state.emotions.enabled = True
+    state.emotions.base_emotion.ref = _write_ref(state, "refs/base_emotion.png")
+    state.emotions.items[0].ref = _write_ref(state, "refs/emotion_0.png")
+    # one outfit with front + back scenes
+    state.outfits.append(
+        OutfitEntry(
+            id="1",
+            prompt="battered leather armor",
+            refs=OutfitRefs(
+                front_full=_write_ref(state, "refs/outfit_1_front.png"),
+                back_full=_write_ref(state, "refs/outfit_1_back.png"),
+            ),
+        )
+    )
+    _approved_dataset(state, ["full body, walking pose", "head and shoulders"], monkeypatch)
 
     out = bucket / "export_out"
     result = export_lora_dataset(state, out)
-    assert result.count == 2
-    assert result.trigger == "conan_char"
-    assert sorted(p.name for p in out.glob("*.png")) == ["000.png", "001.png"]
-    caption0 = (out / "000.txt").read_text(encoding="utf-8")
-    assert caption0.startswith("conan_char, ")
-    assert "walking pose" in caption0
-    assert _STYLE_MARKER not in caption0  # style layer dropped from every caption
+    # 2 passport + 1 base emotion + 1 series emotion + 2 outfit scenes + 2 dataset
+    assert result.count == 8
+    assert len(list(out.glob("*.png"))) == 8
+    assert len(list(out.glob("*.txt"))) == 8
+    # STYLE never leaks into ANY caption.
+    for txt in out.glob("*.txt"):
+        assert _STYLE_MARKER not in txt.read_text(encoding="utf-8")
+    # The two outfit scenes are distinguished by their framing angle.
+    captions = [t.read_text(encoding="utf-8") for t in sorted(out.glob("*.txt"))]
+    assert any("back view" in c for c in captions)
+    assert any("battered leather armor" in c for c in captions)
+    # A dataset composition is captioned with its pose.
+    assert any("walking pose" in c for c in captions)
 
 
-def test_export_skips_unapproved_frames(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_export_excludes_props_and_details(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     state = blank_state("Conan")
     save_state(state)
-    _ready(state)
+    _identity_ready(state)
+    # A prop shot (no character) and an outfit-detail macro (face blanked) — both
+    # must be excluded from a char-LoRA set.
+    state.props.append(
+        PropEntry(
+            id="1",
+            name="sword",
+            shots=[
+                PropShot(what="sword", prompt="a sword", ref=_write_ref(state, "refs/prop.png"))
+            ],
+        )
+    )
+    _approved_dataset(state, ["walking"], monkeypatch)
+    result = export_lora_dataset(state, bucket / "out")
+    # 2 passport + 1 dataset = 3; prop is NOT counted.
+    assert result.count == 3
+
+
+def test_export_skips_unapproved_dataset(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    state = blank_state("Conan")
+    save_state(state)
+    _identity_ready(state)
     monkeypatch.setattr(generation, "generate_image", _fake_ok)
     state.dataset_compositions = ["walking", "sitting"]
     dataset.generate_dataset_frame(state, 0)
     dataset.approve_dataset_frame(state, 0)
     dataset.generate_dataset_frame(state, 1)  # generated but NOT approved
-
     result = export_lora_dataset(state, bucket / "out")
-    assert result.count == 1  # only the approved frame is staged
+    # 2 passport + 1 approved dataset = 3 (the unapproved dataset frame is skipped).
+    assert result.count == 3
 
 
 def test_export_zip_returns_path_and_count(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     state = blank_state("Conan")
     save_state(state)
-    _ready(state)
-    _with_dataset(state, ["walking"], monkeypatch)
+    _identity_ready(state)
+    _approved_dataset(state, ["walking"], monkeypatch)
     zip_path, count = export_lora_zip(state)
-    assert count == 1
+    assert count == 3  # 2 passport + 1 dataset
     assert zip_path is not None
     assert Path(zip_path).is_file()
     assert zip_path.endswith(".zip")
@@ -147,8 +205,8 @@ def test_export_zip_rebuilds_staging(bucket: Path, monkeypatch: pytest.MonkeyPat
     # A re-export must not accumulate stale frames in the staging dir.
     state = blank_state("Conan")
     save_state(state)
-    _ready(state)
-    _with_dataset(state, ["walking", "sitting"], monkeypatch)
+    _identity_ready(state)
+    _approved_dataset(state, ["walking", "sitting"], monkeypatch)
     export_lora_zip(state)
     staging = character_dir(state.character_id) / "lora_export"
     first = sorted(p.name for p in staging.glob("*.png"))
@@ -156,7 +214,7 @@ def test_export_zip_rebuilds_staging(bucket: Path, monkeypatch: pytest.MonkeyPat
     assert sorted(p.name for p in staging.glob("*.png")) == first  # no duplicates
 
 
-def test_export_zip_none_when_no_approved(bucket: Path) -> None:
+def test_export_zip_none_when_nothing_approved(bucket: Path) -> None:
     state = blank_state("Conan")
     save_state(state)
     zip_path, count = export_lora_zip(state)
@@ -183,10 +241,10 @@ def test_on_export_lora_no_frames(bucket: Path) -> None:
 def test_on_export_lora_ok(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     state = blank_state("Conan")
     save_state(state)
-    _ready(state)
-    _with_dataset(state, ["walking", "sitting"], monkeypatch)
+    _identity_ready(state)
+    _approved_dataset(state, ["walking", "sitting"], monkeypatch)
     session = WizardSession(current_screen=ScreenId.FINISH, character=state)
     path, note = handlers.on_export_lora(session)
     assert path is not None and Path(path).is_file()
-    assert "2" in note
+    assert "4" in note  # 2 passport + 2 dataset
     assert "conan_char" in note
