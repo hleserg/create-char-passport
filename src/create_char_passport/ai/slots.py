@@ -61,12 +61,16 @@ def _build_slot(
     label: str,
     elem_id_prefix: str,
 ) -> tuple[gr.Group, Any]:
-    """Render an empty placeholder group with a heading task 6 will replace."""
+    """Render the empty container that :mod:`create_char_passport.ai.wiring` fills.
+
+    The group starts empty (``ai.wiring.wire_check_slot`` re-enters it to add the
+    button + result panel); ``label`` is kept only for the elem-id namespace.
+    """
     safe_key = step_key.replace(":", "_")
     with gr.Group(elem_id=f"{elem_id_prefix}-{safe_key}") as container:
-        marker = gr.Markdown(value=f"_{label} (slot reserved — wired by task 6)_")
-    _ = (prompt_field, marker)  # captured by the dataclass for task-6 access
-    return container, marker
+        pass
+    _ = (prompt_field, label)  # prompt_field is captured by the dataclass for wiring
+    return container, None
 
 
 def build_ai_check_slot(step_key: str, prompt_field: gr.Component) -> AISlot:
