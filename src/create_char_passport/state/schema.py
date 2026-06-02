@@ -13,8 +13,12 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+# The emotion series captures NON-neutral expression variety for the dataset.
+# "neutral" is deliberately absent: the 5 passport frames are already neutral
+# (passport_face is the same FRONT_PORTRAIT scene), so a neutral emotion frame
+# would be a redundant paid generation. The base emotion (if set) replaces
+# neutral downstream. Existing saved characters keep whatever items they stored.
 _DEFAULT_EMOTIONS: tuple[tuple[str, str], ...] = (
-    ("neutral", "neutral"),
     ("angry, furious", "angry, furious"),
     ("smiling warmly", "smiling warmly"),
 )

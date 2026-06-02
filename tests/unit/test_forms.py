@@ -86,14 +86,14 @@ def test_emotions_toggle_writes_nested_flag() -> None:
     set_emotions_enabled(state, True)
     assert state.emotions.enabled is True
     rows = emotion_rows(state)
-    assert [r[0] for r in rows] == ["neutral", "angry, furious", "smiling warmly"]
+    assert [r[0] for r in rows] == ["angry, furious", "smiling warmly"]
     assert rows[0][1] == "—"  # no ref yet
 
 
 def test_emotion_rows_show_ref_when_present() -> None:
     state = blank_state("Conan")
-    state.emotions.items[0].ref = "refs/emotion_neutral.png"
-    assert emotion_rows(state)[0][1] == "refs/emotion_neutral.png"
+    state.emotions.items[0].ref = "refs/emotion_angry_furious.png"
+    assert emotion_rows(state)[0][1] == "refs/emotion_angry_furious.png"
 
 
 def test_set_base_emotion() -> None:
