@@ -80,6 +80,9 @@ class WizardSession:
     # (the costume detail already has a generation, §5); ``None`` when no pending
     # delete. Cleared on confirm or any other outfit action.
     outfit_pending_delete: tuple[int, int] | None = None
+    # Transient UI flag: Approve found a costume detail with a prompt but no
+    # generation (§5) — a second Approve proceeds (details persist, nothing lost).
+    outfit_pending_approve_confirm: bool = False
     notice: str = ""
     # Running API spend for the whole session (incl. pre-character calls like
     # extraction); the per-character figure lives on ``character.cost``.

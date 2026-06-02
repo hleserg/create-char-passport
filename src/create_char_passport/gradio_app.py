@@ -221,6 +221,11 @@ def _wire_outfits(outfits: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
         )
 
     for j in range(3):
+        c[f"detail_prompt_{j}"].blur(
+            partial(handlers.on_outfit_detail_prompt_edit, j=j),
+            [session, c[f"detail_prompt_{j}"]],
+            [session],
+        )
         c[f"detail_gen_{j}"].click(
             partial(handlers.on_outfit_detail_generate, j=j), [session], [session]
         ).then(outfits_refresh, [session], out).then(cost_banner_text, [session], [ctx.cost_banner])

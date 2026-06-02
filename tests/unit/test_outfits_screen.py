@@ -16,7 +16,7 @@ from create_char_passport.screens.views import (
     outfits_refresh,
     render_outfits,
 )
-from create_char_passport.state import CharacterState, OutfitEntry, blank_state
+from create_char_passport.state import CharacterState, OutfitDetail, OutfitEntry, blank_state
 from create_char_passport.storage import character_dir, save_state
 from create_char_passport.wizard import generation
 
@@ -161,6 +161,45 @@ def test_delete_ungenerated_detail_is_immediate(bucket: Path) -> None:
     handlers.on_outfit_delete_detail(session, 0)  # no generation → removed at once
     assert len(char.outfits[0].details) == 0
     assert session.outfit_pending_delete is None
+
+
+def test_detail_prompt_edit_persists(bucket: Path) -> None:
+    session, char = _started(bucket, complex_=True)
+    handlers.on_outfit_add_detail(session)
+    handlers.on_outfit_detail_prompt_edit(session, "  ornate buckle  ", j=0)
+    assert char.outfits[0].details[0].prompt == "ornate buckle"
+
+
+def test_stale_delete_confirm_cleared_by_other_action(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(generation, "generate_image", _fake_ok)
+    session, _char = _started(bucket, complex_=True)
+    handlers.on_outfit_scene_generate(session, SceneId.FRONT_FULL)
+    handlers.on_outfit_add_detail(session)
+    handlers.on_outfit_detail_generate(session, 0)
+    handlers.on_outfit_delete_detail(session, 0)  # arm the confirm
+    assert session.outfit_pending_delete == (0, 1)
+    handlers.on_toggle_outfit_complex(session, True)  # unrelated action dismisses it
+    assert session.outfit_pending_delete is None
+
+
+def test_approve_pending_detail_soft_confirm(bucket: Path) -> None:
+    session, char = _started(bucket)
+    char.outfits[0].complex = True
+    char.outfits[0].refs.front_full = "a.png"
+    char.outfits[0].refs.back_full = "b.png"
+    char.outfits[0].refs.profile_full = "c.png"
+    char.outfits[0].details = [OutfitDetail(prompt="buckle")]
+    # First Approve: a filled-but-ungenerated detail → soft confirm, stays put.
+    out = handlers.on_approve_outfit(session)
+    assert out.current_screen is ScreenId.OUTFITS
+    assert session.outfit_pending_approve_confirm is True
+    assert "без генерации" in out.notice
+    # Second Approve: proceeds (details persist, nothing deleted).
+    out = handlers.on_approve_outfit(session)
+    assert char.active_outfit_id == "1"
+    assert char.outfits[0].details[0].prompt == "buckle"  # not discarded
 
 
 # --------------------------------------------------------------------------- #

@@ -44,6 +44,7 @@ from create_char_passport.wizard.emotions import (
 )
 from create_char_passport.wizard.outfits import (
     FULL_LENGTH_HINT,
+    MAX_OUTFIT_DETAILS,
     current_outfit_index,
     required_scenes_present,
 )
@@ -414,8 +415,9 @@ def render_emotions() -> ScreenHandle:
 
 
 # The outfit screen shows ONE additional outfit at a time (repainted per cursor),
-# with up to this many costume-detail cells when the outfit is complex.
-_OUTFIT_DETAIL_CELLS: int = 3
+# with up to this many costume-detail cells when the outfit is complex (the cap
+# is shared with the wizard so the add path never outruns the rendered cells).
+_OUTFIT_DETAIL_CELLS: int = MAX_OUTFIT_DETAILS
 # (OutfitRefs attribute, preview label) per full-length scene, in fixed order.
 _OUTFIT_ANGLES: tuple[tuple[str, str], ...] = (
     ("front_full", "Фас, полный рост"),
@@ -436,7 +438,7 @@ def _outfits_refresh_keys() -> tuple[str, ...]:
             f"detail_preview_{j}",
             f"detail_delete_confirm_{j}",
         ]
-    keys.append("approve_btn")
+    keys += ["add_detail_btn", "approve_btn"]
     return tuple(keys)
 
 
@@ -574,6 +576,8 @@ def outfits_refresh(session: WizardSession) -> list[Any]:
         pending = session.outfit_pending_delete == (idx, j + 1)
         values[f"detail_delete_confirm_{j}"] = gr.update(visible=pending)
 
+    # The "+ деталь" button disables once the per-outfit detail cap is reached.
+    values["add_detail_btn"] = gr.update(interactive=len(outfit.details) < _OUTFIT_DETAIL_CELLS)
     values["approve_btn"] = gr.update(interactive=required_scenes_present(outfit))
     return [values[k] for k in OUTFITS_REFRESH_KEYS]
 

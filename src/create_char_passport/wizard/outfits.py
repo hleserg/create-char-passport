@@ -48,6 +48,11 @@ from create_char_passport.wizard.generation import identity_refs, render_step_im
 
 FULL_LENGTH_HINT: str = "Нужен ПОЛНЫЙ РОСТ без обрезок — вся фигура целиком в кадре."
 
+# Max costume-detail close-ups per complex outfit. The screen pre-builds this
+# many cells (Gradio's layout is static), and the add path is capped to match so
+# state never holds a detail the UI cannot show or delete.
+MAX_OUTFIT_DETAILS: int = 3
+
 # The full-length scenes an outfit step renders, in fixed order. profile_full is
 # required only for a complex outfit; see :func:`outfit_scenes`.
 _SIMPLE_SCENES: tuple[SceneId, ...] = (SceneId.FRONT_FULL, SceneId.BACK_FULL)
@@ -162,15 +167,16 @@ def generate_outfit_detail(
     front_path = character_asset(state.character_id, front)
     if front_path.is_file():
         refs.append(Ref(path=str(front_path), role="outfit"))
+    # COMPOSITION = the close-up preset + the detail's own prompt text (§5: the
+    # detail field names which part of the costume to zoom in on).
+    composition = effective_composition(state, SceneId.DETAIL_CLOSEUP)
+    detail_text = outfit.details[n - 1].prompt.strip()
+    if detail_text:
+        composition = f"{composition}\n{detail_text}"
     layers = build_prompt_layers(
         state,
         outfit_detail_step(outfit.id, n),
-        overrides={
-            "face": "",
-            "body": "",
-            "expression": "",
-            "composition": effective_composition(state, SceneId.DETAIL_CLOSEUP),
-        },
+        overrides={"face": "", "body": "", "expression": "", "composition": composition},
     )
     result, relative = render_step_image(
         state,
@@ -187,9 +193,15 @@ def generate_outfit_detail(
 
 
 def add_outfit_detail(state: CharacterState, index: int) -> int:
-    """Append an empty costume-detail slot to outfit ``index``; return its 1-based n."""
+    """Append an empty costume-detail slot to outfit ``index``; return its 1-based n.
+
+    Capped at :data:`MAX_OUTFIT_DETAILS` (the screen pre-builds that many cells);
+    at the cap this is a no-op returning the current count, so state never holds
+    a detail with no UI cell.
+    """
     outfit = _require_outfit(state, index)
-    outfit.details.append(OutfitDetail())
+    if len(outfit.details) < MAX_OUTFIT_DETAILS:
+        outfit.details.append(OutfitDetail())
     return len(outfit.details)
 
 

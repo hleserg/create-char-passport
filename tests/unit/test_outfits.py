@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from create_char_passport.config import get_settings
-from create_char_passport.gen import GenerationResult, SceneId
+from create_char_passport.gen import GenerationResult, SceneId, default_composition
 from create_char_passport.state import OutfitEntry, StepRecord, blank_state
 from create_char_passport.storage import REJECTED_DIR, character_dir, save_state
 from create_char_passport.wizard import generation, outfits
@@ -104,10 +104,42 @@ def test_generate_scene_sets_ref_active_and_identity_refs(
     assert result.ok
     assert state.outfits[0].refs.front_full == "refs/outfit_1_front_full.png"
     assert state.active_outfit_id == "1"  # selected before build (OUTFIT layer)
+    # active_outfit_id was set BEFORE build_prompt_layers → the OUTFIT layer
+    # resolved to THIS outfit, not the base (catches a reorder regression).
+    assert fake.calls[0]["layers"]["outfit"] == "red cloak"
+    assert fake.calls[0]["layers"]["composition"] == default_composition(SceneId.FRONT_FULL)
     assert fake.calls[0]["roles"] == ["style", "face", "body"]  # identity refs
     assert fake.calls[0]["outfit_conflict"] is True
     # front-full writes the representative step record (resume / can_advance).
     assert state.steps["outfit_1"].last_path == "refs/outfit_1_front_full.png"
+
+
+def test_generate_back_profile_do_not_write_step_record(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only the front-full shot writes the representative outfit_<id> step record;
+    # regenerating back/profile alone must not clobber that resume pointer.
+    state = blank_state("Conan")
+    save_state(state)
+    _ready(state)
+    _with_outfit(state, complex_=True)
+    monkeypatch.setattr(generation, "generate_image", _Capture())
+    outfits.generate_outfit_scene(state, 0, SceneId.BACK_FULL)
+    assert "outfit_1" not in state.steps
+    outfits.generate_outfit_scene(state, 0, SceneId.PROFILE_FULL)
+    assert "outfit_1" not in state.steps
+
+
+def test_regenerate_scene_unapproves_it(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    state = blank_state("Conan")
+    save_state(state)
+    _ready(state)
+    _with_outfit(state)
+    monkeypatch.setattr(generation, "generate_image", _Capture())
+    outfits.generate_outfit_scene(state, 0, SceneId.FRONT_FULL)
+    state.outfits[0].refs.front_full_approved = True  # user approved it
+    outfits.generate_outfit_scene(state, 0, SceneId.FRONT_FULL)  # regenerate
+    assert state.outfits[0].refs.front_full_approved is False  # fresh gen un-approves
 
 
 def test_generate_scenes_do_not_clobber_each_other(
@@ -181,6 +213,10 @@ def test_generate_detail_uses_style_and_outfit_only(
     assert call["outfit_conflict"] is False
     assert call["layers"]["face"] == "" and call["layers"]["body"] == ""
     assert call["layers"]["expression"] == ""
+    # COMPOSITION = the close-up preset + the detail's own field text (§5).
+    composition = call["layers"]["composition"]
+    assert composition.startswith(default_composition(SceneId.DETAIL_CLOSEUP))
+    assert "ornate buckle" in composition
 
 
 def test_generate_detail_bad_index_raises(bucket: Path) -> None:
@@ -221,6 +257,15 @@ def test_add_delete_detail_and_has_generation(
     outfits.delete_outfit_detail(state, 0, 9)  # out of range → no-op
 
 
+def test_add_outfit_detail_capped(bucket: Path) -> None:
+    state = blank_state("Conan")
+    _with_outfit(state, complex_=True)
+    for _ in range(outfits.MAX_OUTFIT_DETAILS + 3):
+        outfits.add_outfit_detail(state, 0)
+    # The add path never exceeds what the UI can render/delete.
+    assert len(state.outfits[0].details) == outfits.MAX_OUTFIT_DETAILS
+
+
 # --------------------------------------------------------------------------- #
 # Approval gating
 # --------------------------------------------------------------------------- #
@@ -231,9 +276,11 @@ def test_required_scenes_present_keys_on_presence_not_approval() -> None:
     assert outfits.required_scenes_present(outfit) is False
     outfit.refs.back_full = "b.png"
     assert outfits.required_scenes_present(outfit) is True
-    # the approved flags must NOT affect the gate (they are optimization-only).
-    outfit.refs.front_full_approved = False
-    assert outfits.required_scenes_present(outfit) is True
+    # An approved flag can neither help nor substitute for a missing scene: drop
+    # a required ref but mark it approved → still not present (gate is path-only).
+    outfit.refs.back_full = None
+    outfit.refs.back_full_approved = True
+    assert outfits.required_scenes_present(outfit) is False
 
 
 def test_required_scenes_complex_needs_profile() -> None:
