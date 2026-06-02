@@ -96,8 +96,8 @@ def test_render_step_image_failure_preserves(bucket: Path, monkeypatch: pytest.M
 # emotions: generate / missing
 # --------------------------------------------------------------------------- #
 def test_emotion_values(bucket: Path) -> None:
+    # "neutral" is intentionally absent — the passport already covers it.
     assert emotions.emotion_values(blank_state("Heron")) == [
-        "neutral",
         "angry, furious",
         "smiling warmly",
     ]
@@ -110,7 +110,7 @@ def test_generate_emotion_sets_ref(bucket: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(generation, "generate_image", _fake_ok)
     result = emotions.generate_emotion(state, 0)
     assert result.ok
-    assert state.emotions.items[0].ref == "refs/emotion_neutral.png"
+    assert state.emotions.items[0].ref == "refs/emotion_angry_furious.png"
 
 
 def test_generate_emotion_failure_leaves_no_ref(
@@ -145,7 +145,7 @@ def test_generate_base_emotion_sets_ref(bucket: Path, monkeypatch: pytest.Monkey
 def test_missing_emotion_refs(bucket: Path) -> None:
     state = blank_state("Heron")
     state.emotions.enabled = True  # series counts only when the block is on
-    assert emotions.missing_emotion_refs(state) == ["neutral", "angry, furious", "smiling warmly"]
+    assert emotions.missing_emotion_refs(state) == ["angry, furious", "smiling warmly"]
     for item in state.emotions.items:
         item.ref = "refs/x.png"
     assert emotions.missing_emotion_refs(state) == []

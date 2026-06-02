@@ -165,7 +165,7 @@ def render_char_data() -> ScreenHandle:
                 headers=["Emotion", "Reference"],
                 datatype=["str", "str"],
                 interactive=False,
-                row_count=3,
+                row_count=2,
                 column_count=2,
             )
 
@@ -322,10 +322,13 @@ def render_passport() -> ScreenHandle:
 # Components refreshed when the emotions screen (re)renders, in fixed order.
 EMOTIONS_REFRESH_KEYS: tuple[str, ...] = (
     "emotion_row",
+    "emo_cell_0",
     "emo_label_0",
     "emo_preview_0",
+    "emo_cell_1",
     "emo_label_1",
     "emo_preview_1",
+    "emo_cell_2",
     "emo_label_2",
     "emo_preview_2",
     "base_emotion_enabled",
@@ -336,7 +339,10 @@ EMOTIONS_REFRESH_KEYS: tuple[str, ...] = (
     "skip_btn",
 )
 
-# The emotions screen renders a fixed row of 3 cells (the default 3 base emotions).
+# Max emotion cells the screen pre-builds. The default series has 2 (the
+# non-neutral expressions); a legacy saved character may carry up to 3 (incl.
+# its old "neutral"). Cells beyond the character's own ``items`` are hidden at
+# refresh, so the layout adapts to either count without rebuilding.
 _EMOTION_CELLS: int = 3
 
 
@@ -347,7 +353,7 @@ def render_emotions() -> ScreenHandle:
         _heading(ScreenId.EMOTIONS, "Сгенерируй портрет для каждой эмоции (по кнопке под кадром).")
         with gr.Row() as emotion_row:
             for i in range(_EMOTION_CELLS):
-                with gr.Column():
+                with gr.Column() as emo_cell:
                     components[f"emo_label_{i}"] = gr.Markdown(f"**эмоция {i + 1}**")
                     components[f"emo_preview_{i}"] = gr.Image(
                         label="Превью", interactive=False, type="filepath"
@@ -355,6 +361,7 @@ def render_emotions() -> ScreenHandle:
                     components[f"emo_gen_{i}"] = gr.Button(
                         "Сгенерировать", elem_id=f"emotion-generate-{i}"
                     )
+                components[f"emo_cell_{i}"] = emo_cell
         # The series row is hidden in a base-only state (Emotions block off) so its
         # generate buttons are unreachable and can't bill out-of-pipeline frames.
         components["emotion_row"] = emotion_row
@@ -588,6 +595,9 @@ def emotions_refresh(session: WizardSession) -> list[Any]:
             path = character_asset(state.character_id, item.ref)
             if path.is_file():
                 preview = str(path)
+        # Hide cells with no backing emotion (default series is shorter than the
+        # pre-built cell count) so no empty cell with a dead generate button shows.
+        values[f"emo_cell_{i}"] = gr.update(visible=item is not None)
         values[f"emo_label_{i}"] = gr.update(value=f"**{item.value}**" if item else "")
         values[f"emo_preview_{i}"] = gr.update(value=preview)
 

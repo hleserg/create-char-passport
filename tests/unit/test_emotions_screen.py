@@ -54,7 +54,7 @@ def test_on_enter_emotions_marks_phase(bucket: Path) -> None:
     char.emotions.enabled = True
     session.emotions_offer_skip = True
     handlers.on_enter_emotions(session)
-    assert char.current_step == "emotion_neutral"  # resume routes here
+    assert char.current_step == "emotion_angry_furious"  # first series emotion; resume routes here
     assert session.emotions_offer_skip is False
 
 
@@ -93,10 +93,10 @@ def test_on_emotion_generate_sets_ref_and_bills(
     monkeypatch.setattr(generation, "generate_image", _fake_ok)
     session, char = _started(bucket)
     out = handlers.on_emotion_generate(session, 0)
-    assert char.emotions.items[0].ref == "refs/emotion_neutral.png"
+    assert char.emotions.items[0].ref == "refs/emotion_angry_furious.png"
     assert out.cost.image_calls == 1
     assert char.cost.image_calls == 1
-    assert "neutral" in out.notice
+    assert "angry" in out.notice
 
 
 def test_on_emotion_generate_bad_index_is_noop(
@@ -207,11 +207,10 @@ def test_on_emotion_generate_clears_stale_skip_offer(
     monkeypatch.setattr(generation, "generate_image", _fake_ok)
     session, char = _started(bucket)
     char.emotions.enabled = True
-    char.emotions.items[1].ref = "refs/x.png"
-    char.emotions.items[2].ref = "refs/x.png"
+    char.emotions.items[1].ref = "refs/x.png"  # only the first series emotion is missing
     session.emotions_offer_skip = True  # Approve previously found a gap
     out = handlers.on_emotion_generate(session, 0)  # fill the last gap
-    assert char.emotions.items[0].ref == "refs/emotion_neutral.png"
+    assert char.emotions.items[0].ref == "refs/emotion_angry_furious.png"
     assert out.emotions_offer_skip is False
 
 
@@ -241,15 +240,19 @@ def test_emotions_refresh_none_is_all_noop() -> None:
 def test_emotions_refresh_populates(bucket: Path) -> None:
     session, char = _started(bucket)
     cdir = character_dir(char.character_id)
-    (cdir / "refs/emotion_neutral.png").write_bytes(b"img")
+    (cdir / "refs/emotion_angry_furious.png").write_bytes(b"img")
     char.emotions.enabled = True
-    char.emotions.items[0].ref = "refs/emotion_neutral.png"
+    char.emotions.items[0].ref = "refs/emotion_angry_furious.png"
     char.emotions.base_emotion.enabled = True
     session.emotions_offer_skip = True
     upd = dict(zip(EMOTIONS_REFRESH_KEYS, emotions_refresh(session), strict=True))
     assert upd["emotion_row"]["visible"] is True
-    assert "neutral" in upd["emo_label_0"]["value"]
-    assert upd["emo_preview_0"]["value"] == str(cdir / "refs/emotion_neutral.png")
+    assert "angry" in upd["emo_label_0"]["value"]
+    assert upd["emo_preview_0"]["value"] == str(cdir / "refs/emotion_angry_furious.png")
+    # Default series has 2 emotions → cells 0,1 shown, the spare 3rd cell hidden.
+    assert upd["emo_cell_0"]["visible"] is True
+    assert upd["emo_cell_1"]["visible"] is True
+    assert upd["emo_cell_2"]["visible"] is False
     assert upd["base_emotion_enabled"]["value"] is True
     assert upd["base_emotion_block"]["visible"] is True
     assert upd["base_emotion_value"]["interactive"] is True
@@ -257,12 +260,13 @@ def test_emotions_refresh_populates(bucket: Path) -> None:
 
 
 def test_emotions_refresh_series_row_hidden_base_only(bucket: Path) -> None:
-    """Series off → the 3-cell row is hidden and its labels blanked (no phantom cells)."""
+    """Series off → the row is hidden and every cell blanked/hidden (no phantom cells)."""
     session, char = _started(bucket)
     char.emotions.enabled = False
     char.emotions.base_emotion.enabled = True
     upd = dict(zip(EMOTIONS_REFRESH_KEYS, emotions_refresh(session), strict=True))
     assert upd["emotion_row"]["visible"] is False
+    assert upd["emo_cell_0"]["visible"] is False
     assert upd["emo_label_0"]["value"] == ""
     assert upd["emo_preview_0"]["value"] is None
 

@@ -33,9 +33,8 @@ def test_blank_state_defaults() -> None:
     assert state.active_outfit_id == "base"
     assert state.current_step is None
     assert state.emotions.enabled is False
-    # 3 default emotion items pre-seeded.
+    # Non-neutral expression series pre-seeded ("neutral" lives in the passport).
     assert [item.value for item in state.emotions.items] == [
-        "neutral",
         "angry, furious",
         "smiling warmly",
     ]
@@ -104,7 +103,7 @@ def test_state_from_dict_tolerates_missing_optional_blocks() -> None:
     restored = state_from_dict(minimal)
     assert restored.name == ""
     assert restored.character_table == {}
-    assert restored.emotions.items  # default 3 items still seeded
+    assert restored.emotions.items  # default series still seeded
     assert restored.outfits == []
     assert restored.props == []
     assert restored.steps == {}
