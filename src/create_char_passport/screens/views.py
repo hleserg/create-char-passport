@@ -42,6 +42,11 @@ from create_char_passport.wizard.emotions import (
     BASE_EMOTION_DESCRIPTION,
     BASE_EMOTION_HINT,
 )
+from create_char_passport.wizard.outfits import (
+    FULL_LENGTH_HINT,
+    current_outfit_index,
+    required_scenes_present,
+)
 from create_char_passport.wizard.passport import (
     COMMON_CRITERIA,
     FACE_BODY_HINT,
@@ -408,13 +413,169 @@ def render_emotions() -> ScreenHandle:
     )
 
 
+# The outfit screen shows ONE additional outfit at a time (repainted per cursor),
+# with up to this many costume-detail cells when the outfit is complex.
+_OUTFIT_DETAIL_CELLS: int = 3
+# (OutfitRefs attribute, preview label) per full-length scene, in fixed order.
+_OUTFIT_ANGLES: tuple[tuple[str, str], ...] = (
+    ("front_full", "Фас, полный рост"),
+    ("back_full", "Спина, полный рост"),
+    ("profile_full", "Профиль, полный рост"),
+)
+
+
+def _outfits_refresh_keys() -> tuple[str, ...]:
+    keys: list[str] = ["outfit_label", "outfit_prompt", "complex_toggle", "status"]
+    for attr, _label in _OUTFIT_ANGLES:
+        keys += [f"{attr}_block", f"{attr}_preview", f"{attr}_approved"]
+    keys.append("detail_block")
+    for j in range(_OUTFIT_DETAIL_CELLS):
+        keys += [
+            f"detail_cell_{j}",
+            f"detail_prompt_{j}",
+            f"detail_preview_{j}",
+            f"detail_delete_confirm_{j}",
+        ]
+    keys.append("approve_btn")
+    return tuple(keys)
+
+
+# Components repainted when the outfit screen (re)renders, in fixed order.
+OUTFITS_REFRESH_KEYS: tuple[str, ...] = _outfits_refresh_keys()
+
+
 def render_outfits() -> ScreenHandle:
-    return _render_step(
-        ScreenId.OUTFITS,
-        body="Additional outfits — one generation step per outfit row.",
-        representative_step_key="outfit_step",
-        with_edit_slot=False,
+    """Outfit step (window 5, §5) — one additional outfit at a time.
+
+    A single ``gr.Group`` repainted by :func:`outfits_refresh` per cursor
+    (``current_step == outfit_<id>``): the clothing prompt, the "complex" toggle,
+    front/back full-length scenes (+ profile when complex), and the costume-detail
+    block (complex only). ``ai_check`` slots are reserved empty containers (K4,
+    filled by task 6); the per-preview "Утверждено" checkbox is optimization-only.
+    """
+    components: dict[str, Any] = {}
+    with gr.Group(visible=False) as group:
+        gr.Markdown("### Наряд")
+        components["outfit_label"] = gr.Markdown("")
+        gr.Markdown(f"_{FULL_LENGTH_HINT}_")
+        components["outfit_prompt"] = gr.Textbox(
+            label="Промт одежды", lines=2, interactive=True, elem_id="outfit-prompt"
+        )
+        components["complex_toggle"] = gr.Checkbox(label="Сложный наряд", value=False)
+        components["status"] = gr.Markdown("")
+
+        prompt = components["outfit_prompt"]
+        ai_check = build_ai_check_slot("outfit_step", prompt)
+
+        with gr.Row():
+            for attr, label in _OUTFIT_ANGLES:
+                with gr.Group() as block:
+                    components[f"{attr}_preview"] = gr.Image(
+                        label=label, interactive=False, type="filepath"
+                    )
+                    components[f"{attr}_gen"] = gr.Button(
+                        "Сгенерировать", elem_id=f"outfit-{attr.replace('_', '-')}-generate"
+                    )
+                    components[f"{attr}_approved"] = gr.Checkbox(label="Утверждено", value=False)
+                components[f"{attr}_block"] = block
+
+        with gr.Group(visible=False) as detail_block:
+            gr.Markdown("**Детали костюма** (крупные планы — только стиль + этот наряд)")
+            for j in range(_OUTFIT_DETAIL_CELLS):
+                with gr.Group(visible=False) as cell:
+                    components[f"detail_prompt_{j}"] = gr.Textbox(
+                        label=f"Деталь {j + 1}", lines=1, interactive=True
+                    )
+                    components[f"detail_preview_{j}"] = gr.Image(
+                        label="Превью детали", interactive=False, type="filepath"
+                    )
+                    components[f"detail_ai_check_{j}"] = build_ai_check_slot(
+                        "outfit_detail_step", components[f"detail_prompt_{j}"]
+                    )
+                    with gr.Row():
+                        components[f"detail_gen_{j}"] = gr.Button(
+                            "Сгенерировать деталь", elem_id=f"outfit-detail-generate-{j}"
+                        )
+                        components[f"detail_delete_{j}"] = gr.Button(
+                            "Удалить", elem_id=f"outfit-detail-delete-{j}"
+                        )
+                        components[f"detail_delete_confirm_{j}"] = gr.Button(
+                            "Удалить с генерацией",
+                            variant="stop",
+                            visible=False,
+                            elem_id=f"outfit-detail-delete-confirm-{j}",
+                        )
+                components[f"detail_cell_{j}"] = cell
+            components["add_detail_btn"] = gr.Button("+ деталь", elem_id="outfit-add-detail")
+        components["detail_block"] = detail_block
+
+        with gr.Row():
+            components["back_btn"] = gr.Button("← Назад", elem_id="outfits-back")
+            components["approve_btn"] = gr.Button(
+                "Согласовать наряд", variant="primary", elem_id="outfits-approve"
+            )
+    return ScreenHandle(
+        screen=ScreenId.OUTFITS,
+        container=group,
+        prompt=prompt,
+        ai_check=ai_check,
+        ai_edit=None,
+        components=components,
     )
+
+
+def outfits_refresh(session: WizardSession) -> list[Any]:
+    """Repaint the outfit screen for the cursor's outfit, in ``OUTFITS_REFRESH_KEYS`` order.
+
+    No character, or a cursor that resolves to no outfit → all no-op updates
+    (plus the status line). Per outfit: clothing prompt + complex toggle, each
+    angle preview (profile hidden when simple), the costume-detail cells (shown
+    only when complex), the delete-confirm affordance (driven by the session's
+    pending-delete flag), and the Approve button gated on scene *presence*.
+    """
+    state = session.character
+    values: dict[str, Any] = dict.fromkeys(OUTFITS_REFRESH_KEYS, gr.update())
+    values["status"] = gr.update(value=session.notice or "")
+    if state is None:
+        return [values[k] for k in OUTFITS_REFRESH_KEYS]
+    idx = current_outfit_index(state)
+    if idx is None:
+        return [values[k] for k in OUTFITS_REFRESH_KEYS]
+    outfit = state.outfits[idx]
+
+    complex_ = outfit.complex
+    values["outfit_label"] = gr.update(
+        value=f"**Наряд {idx + 1} из {len(state.outfits)}:** {outfit.prompt.strip() or '—'}"
+    )
+    values["outfit_prompt"] = gr.update(value=outfit.prompt)
+    values["complex_toggle"] = gr.update(value=complex_)
+    for attr, _label in _OUTFIT_ANGLES:
+        ref = getattr(outfit.refs, attr)
+        preview: str | None = None
+        if ref:
+            path = character_asset(state.character_id, ref)
+            if path.is_file():
+                preview = str(path)
+        values[f"{attr}_block"] = gr.update(visible=complex_ if attr == "profile_full" else True)
+        values[f"{attr}_preview"] = gr.update(value=preview)
+        values[f"{attr}_approved"] = gr.update(value=getattr(outfit.refs, f"{attr}_approved"))
+
+    values["detail_block"] = gr.update(visible=complex_)
+    for j in range(_OUTFIT_DETAIL_CELLS):
+        detail = outfit.details[j] if (complex_ and j < len(outfit.details)) else None
+        values[f"detail_cell_{j}"] = gr.update(visible=detail is not None)
+        values[f"detail_prompt_{j}"] = gr.update(value=detail.prompt if detail else "")
+        dpreview: str | None = None
+        if detail is not None and detail.ref:
+            dpath = character_asset(state.character_id, detail.ref)
+            if dpath.is_file():
+                dpreview = str(dpath)
+        values[f"detail_preview_{j}"] = gr.update(value=dpreview)
+        pending = session.outfit_pending_delete == (idx, j + 1)
+        values[f"detail_delete_confirm_{j}"] = gr.update(visible=pending)
+
+    values["approve_btn"] = gr.update(interactive=required_scenes_present(outfit))
+    return [values[k] for k in OUTFITS_REFRESH_KEYS]
 
 
 def render_props() -> ScreenHandle:

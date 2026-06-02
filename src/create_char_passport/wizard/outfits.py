@@ -261,3 +261,30 @@ def all_outfits_approved(state: CharacterState) -> bool:
     if not state.outfits_enabled:
         return True
     return all(required_scenes_present(outfit) for outfit in state.outfits)
+
+
+def first_outfit_step(state: CharacterState) -> str | None:
+    """Step key of the first additional outfit (the phase entry cursor), or ``None``."""
+    return outfit_step(state.outfits[0].id) if state.outfits else None
+
+
+def current_outfit_index(state: CharacterState) -> int | None:
+    """Index of the outfit the cursor (``current_step``) is on, or ``None``.
+
+    The cursor for a costume-detail step (``outfit_<id>_detail_<n>``) still
+    resolves to its parent outfit, so the detail block stays on the right outfit.
+    """
+    step = state.current_step
+    if not step:
+        return None
+    for i, outfit in enumerate(state.outfits):
+        prefix = outfit_step(outfit.id)
+        if step == prefix or step.startswith(f"{prefix}_detail_"):
+            return i
+    return None
+
+
+def adjacent_outfit_step(state: CharacterState, index: int, *, forward: bool) -> str | None:
+    """Step key of the next/previous outfit relative to ``index``, or ``None`` at the edge."""
+    nxt = index + 1 if forward else index - 1
+    return outfit_step(state.outfits[nxt].id) if 0 <= nxt < len(state.outfits) else None

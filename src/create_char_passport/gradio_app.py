@@ -14,11 +14,13 @@ from functools import partial
 
 import gradio as gr
 
+from create_char_passport.gen import SceneId
 from create_char_passport.screens import handlers
 from create_char_passport.screens.router import SCREEN_ORDER, ScreenId, WizardSession
 from create_char_passport.screens.views import (
     CHAR_DATA_REFRESH_KEYS,
     EMOTIONS_REFRESH_KEYS,
+    OUTFITS_REFRESH_KEYS,
     PASSPORT_REFRESH_KEYS,
     ScreenHandle,
     build_screens,
@@ -27,6 +29,7 @@ from create_char_passport.screens.views import (
     emotions_refresh,
     home_refresh,
     interactive_update,
+    outfits_refresh,
     passport_refresh,
     screen_visibility,
     update_table_fields,
@@ -52,9 +55,11 @@ def _wire_home(home: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
     c["open_saved_btn"].click(handlers.on_open_saved, [session, c["saved"]], [session]).then(
         handlers.on_enter_passport, [session], [session]
     ).then(handlers.on_enter_emotions, [session], [session]).then(
-        char_data_refresh, [session], ctx.char_data_outputs
-    ).then(passport_refresh, [session], ctx.passport_outputs).then(
-        emotions_refresh, [session], ctx.emotions_outputs
+        handlers.on_enter_outfits, [session], [session]
+    ).then(char_data_refresh, [session], ctx.char_data_outputs).then(
+        passport_refresh, [session], ctx.passport_outputs
+    ).then(emotions_refresh, [session], ctx.emotions_outputs).then(
+        outfits_refresh, [session], ctx.outfits_outputs
     ).then(screen_visibility, [session], ctx.containers).then(
         cost_banner_text, [session], [ctx.cost_banner]
     )
@@ -137,9 +142,11 @@ def _wire_passport(passport: ScreenHandle, session: gr.State, ctx: _Ctx) -> None
     # and repaint that screen too.
     c["forward_btn"].click(handlers.on_passport_forward, [session], [session]).then(
         handlers.on_enter_emotions, [session], [session]
-    ).then(screen_visibility, [session], ctx.containers).then(
-        passport_refresh, [session], ctx.passport_outputs
-    ).then(emotions_refresh, [session], ctx.emotions_outputs)
+    ).then(handlers.on_enter_outfits, [session], [session]).then(
+        screen_visibility, [session], ctx.containers
+    ).then(passport_refresh, [session], ctx.passport_outputs).then(
+        emotions_refresh, [session], ctx.emotions_outputs
+    ).then(outfits_refresh, [session], ctx.outfits_outputs)
 
 
 def _wire_emotions(emotions: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
@@ -167,18 +174,75 @@ def _wire_emotions(emotions: ScreenHandle, session: gr.State, ctx: _Ctx) -> None
         emotions_refresh, [session], ctx.emotions_outputs
     ).then(cost_banner_text, [session], [ctx.cost_banner])
 
-    # Approve (offers skip on an incomplete set) / skip / back.
+    # Approve (offers skip on an incomplete set) / skip / back. Approve/skip can
+    # land on the outfits phase — seed its cursor + repaint it too.
     c["approve_btn"].click(handlers.on_emotions_approve, [session], [session]).then(
-        screen_visibility, [session], ctx.containers
-    ).then(emotions_refresh, [session], ctx.emotions_outputs)
+        handlers.on_enter_outfits, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(
+        emotions_refresh, [session], ctx.emotions_outputs
+    ).then(outfits_refresh, [session], ctx.outfits_outputs)
     c["skip_btn"].click(handlers.on_emotions_skip, [session], [session]).then(
-        screen_visibility, [session], ctx.containers
-    ).then(emotions_refresh, [session], ctx.emotions_outputs)
+        handlers.on_enter_outfits, [session], [session]
+    ).then(screen_visibility, [session], ctx.containers).then(
+        emotions_refresh, [session], ctx.emotions_outputs
+    ).then(outfits_refresh, [session], ctx.outfits_outputs)
     c["back_btn"].click(handlers.on_emotions_back, [session], [session]).then(
         screen_visibility, [session], ctx.containers
     ).then(passport_refresh, [session], ctx.passport_outputs).then(
         emotions_refresh, [session], ctx.emotions_outputs
     )
+
+
+def _wire_outfits(outfits: ScreenHandle, session: gr.State, ctx: _Ctx) -> None:
+    """One additional outfit at a time: clothing prompt + complex toggle, the 3
+    full-length scene generators, costume details, and approve/back."""
+    c = outfits.components
+    out = ctx.outfits_outputs
+    c["outfit_prompt"].blur(
+        handlers.on_outfit_prompt_edit, [session, c["outfit_prompt"]], [session]
+    )
+    c["complex_toggle"].change(
+        handlers.on_toggle_outfit_complex, [session, c["complex_toggle"]], [session]
+    ).then(outfits_refresh, [session], out)
+
+    scene_by_attr = {
+        "front_full": SceneId.FRONT_FULL,
+        "back_full": SceneId.BACK_FULL,
+        "profile_full": SceneId.PROFILE_FULL,
+    }
+    for attr, scene in scene_by_attr.items():
+        c[f"{attr}_gen"].click(
+            partial(handlers.on_outfit_scene_generate, scene_id=scene), [session], [session]
+        ).then(outfits_refresh, [session], out).then(cost_banner_text, [session], [ctx.cost_banner])
+        c[f"{attr}_approved"].change(
+            partial(handlers.on_outfit_scene_approve_toggle, scene_id=scene),
+            [session, c[f"{attr}_approved"]],
+            [session],
+        )
+
+    for j in range(3):
+        c[f"detail_gen_{j}"].click(
+            partial(handlers.on_outfit_detail_generate, j=j), [session], [session]
+        ).then(outfits_refresh, [session], out).then(cost_banner_text, [session], [ctx.cost_banner])
+        c[f"detail_delete_{j}"].click(
+            partial(handlers.on_outfit_delete_detail, j=j), [session], [session]
+        ).then(outfits_refresh, [session], out)
+        c[f"detail_delete_confirm_{j}"].click(
+            partial(handlers.on_outfit_delete_detail_confirmed, j=j), [session], [session]
+        ).then(outfits_refresh, [session], out)
+    c["add_detail_btn"].click(handlers.on_outfit_add_detail, [session], [session]).then(
+        outfits_refresh, [session], out
+    )
+
+    # Approve advances to the next outfit or out of the phase; back steps back.
+    c["approve_btn"].click(handlers.on_approve_outfit, [session], [session]).then(
+        screen_visibility, [session], ctx.containers
+    ).then(outfits_refresh, [session], out)
+    c["back_btn"].click(handlers.on_outfits_back, [session], [session]).then(
+        screen_visibility, [session], ctx.containers
+    ).then(emotions_refresh, [session], ctx.emotions_outputs).then(
+        passport_refresh, [session], ctx.passport_outputs
+    ).then(outfits_refresh, [session], out)
 
 
 class _Ctx:
@@ -192,6 +256,8 @@ class _Ctx:
         self.passport_outputs = [pp[key] for key in PASSPORT_REFRESH_KEYS]
         em = handles[ScreenId.EMOTIONS].components
         self.emotions_outputs = [em[key] for key in EMOTIONS_REFRESH_KEYS]
+        of = handles[ScreenId.OUTFITS].components
+        self.outfits_outputs = [of[key] for key in OUTFITS_REFRESH_KEYS]
         self.cost_banner = cost_banner
 
 
@@ -221,6 +287,7 @@ def build_demo() -> gr.Blocks:
         _wire_char_data(handles[ScreenId.CHAR_DATA], session, ctx)
         _wire_passport(handles[ScreenId.PASSPORT], session, ctx)
         _wire_emotions(handles[ScreenId.EMOTIONS], session, ctx)
+        _wire_outfits(handles[ScreenId.OUTFITS], session, ctx)
 
         # Populate the saved-characters list + cost banner from the bucket on app
         # open, so a returning user sees their characters without a paid call.

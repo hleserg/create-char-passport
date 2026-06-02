@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -26,9 +27,11 @@ class _Capture:
 
     def __init__(self, *, ok: bool = True) -> None:
         self.ok = ok
-        self.calls: list[dict[str, object]] = []
+        self.calls: list[dict[str, Any]] = []
 
-    def __call__(self, prompt_layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
+    def __call__(
+        self, prompt_layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None
+    ):
         self.calls.append(
             {
                 "layers": dict(prompt_layers),
@@ -123,7 +126,9 @@ def test_generate_scenes_do_not_clobber_each_other(
     assert state.outfits[0].refs.front_full != state.outfits[0].refs.back_full
 
 
-def test_generate_scene_failure_leaves_no_ref(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_scene_failure_leaves_no_ref(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     state = blank_state("Conan")
     save_state(state)
     _ready(state)
@@ -178,6 +183,13 @@ def test_generate_detail_uses_style_and_outfit_only(
     assert call["layers"]["expression"] == ""
 
 
+def test_generate_detail_bad_index_raises(bucket: Path) -> None:
+    state = blank_state("Conan")
+    _with_outfit(state, complex_=True)
+    with pytest.raises(IndexError, match="out of range"):
+        outfits.generate_outfit_detail(state, 0, 5)  # no such detail
+
+
 def test_generate_detail_without_front_fails(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     state = blank_state("Conan")
     save_state(state)
@@ -190,7 +202,9 @@ def test_generate_detail_without_front_fails(bucket: Path, monkeypatch: pytest.M
     assert state.outfits[0].details[0].ref is None
 
 
-def test_add_delete_detail_and_has_generation(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_add_delete_detail_and_has_generation(
+    bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     state = blank_state("Conan")
     save_state(state)
     _ready(state)
@@ -235,7 +249,10 @@ def test_missing_outfit_scenes(bucket: Path) -> None:
     state = blank_state("Conan")
     assert outfits.missing_outfit_scenes(state) == []  # block off
     _with_outfit(state)
-    assert outfits.missing_outfit_scenes(state) == ["red cloak — front_full", "red cloak — back_full"]
+    assert outfits.missing_outfit_scenes(state) == [
+        "red cloak — front_full",
+        "red cloak — back_full",
+    ]
     state.outfits[0].refs.front_full = "a.png"
     state.outfits[0].refs.back_full = "b.png"
     assert outfits.missing_outfit_scenes(state) == []
@@ -257,6 +274,25 @@ def test_approve_outfit_complete_sets_active_and_approved(bucket: Path) -> None:
     assert state.active_outfit_id == "1"
     assert state.outfits[0].refs.front_full_approved is True
     assert state.outfits[0].refs.back_full_approved is True
+
+
+def test_cursor_helpers(bucket: Path) -> None:
+    state = blank_state("Conan")
+    state.outfits_enabled = True
+    state.outfits = [OutfitEntry(id="1", prompt="a"), OutfitEntry(id="2", prompt="b")]
+    assert outfits.first_outfit_step(state) == "outfit_1"
+    assert outfits.current_outfit_index(state) is None  # no cursor yet
+    state.current_step = "outfit_2"
+    assert outfits.current_outfit_index(state) == 1
+    state.current_step = "outfit_2_detail_1"  # a detail resolves to its parent outfit
+    assert outfits.current_outfit_index(state) == 1
+    assert outfits.adjacent_outfit_step(state, 1, forward=True) is None  # last
+    assert outfits.adjacent_outfit_step(state, 1, forward=False) == "outfit_1"
+    assert outfits.adjacent_outfit_step(state, 0, forward=True) == "outfit_2"
+
+
+def test_first_outfit_step_empty(bucket: Path) -> None:
+    assert outfits.first_outfit_step(blank_state("Conan")) is None
 
 
 def test_all_outfits_approved(bucket: Path) -> None:
