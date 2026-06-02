@@ -328,3 +328,28 @@ def test_text_part_includes_role_caption_and_conflict_rule(
     assert "[STYLE]" in text
     assert "image 1 = the FACE reference" in text
     assert "IGNORE the clothing" in text
+
+
+def test_style_caption_forbids_comic_page_structure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A comic-page style ref must contribute style only, never its panels/borders."""
+    response = FakeResponse(
+        candidates=[
+            FakeCandidate(content=FakeContent(parts=[FakePart(inline_data=FakeInline(data=b"x"))]))
+        ]
+    )
+    client = _patch_client(monkeypatch, response)
+    ref = tmp_path / "style.png"
+    ref.write_bytes(b"r")
+
+    generate_image(
+        prompt_layers={"style": "grim"},
+        refs=[Ref(path=str(ref), role="style")],
+        output_path=tmp_path / "out.png",
+    )
+
+    text = client.models.calls[0]["contents"][-1]["text"]
+    assert "image 1 = the ART-STYLE reference" in text
+    assert "comic" in text and "panel" in text  # explicitly forbids page structure
+    assert "single standalone" in text
