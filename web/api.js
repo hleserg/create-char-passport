@@ -82,6 +82,34 @@
         body: JSON.stringify({ index: index }),
       });
     },
+    /* outfits phase -> ({outfits}) */
+    getOutfits(id) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/outfits");
+    },
+    outfitGenerate(id, payload) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/outfits/generate", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+    outfitComplex(id, index, complex) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/outfits/complex", {
+        method: "POST",
+        body: JSON.stringify({ index: index, complex: complex }),
+      });
+    },
+    outfitApprove(id, index) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/outfits/approve", {
+        method: "POST",
+        body: JSON.stringify({ index: index }),
+      });
+    },
+    outfitDetail(id, action, payload) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/outfits/detail/" + action, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
     /* URL of a generated frame image (v busts the cache after a regenerate) */
     imageUrl(id, stepKey, v) {
       return "/api/character/" + encodeURIComponent(id) + "/image/" + encodeURIComponent(stepKey) + "?v=" + (v || 0);
