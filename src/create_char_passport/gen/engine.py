@@ -67,12 +67,17 @@ class GenerationResult:
     never write back a "step succeeded" flag for a failed call). ``usage``
     carries the response's token counts for transparency (cost is metered via
     the ``meter`` argument; see :mod:`create_char_passport.gen.pricing`).
+
+    ``image_bytes`` is the raw PNG just generated (held only transiently). The
+    web layer uses it to populate a local serve cache straight from memory, so a
+    fresh frame is served without a slow read back from the Storage Bucket.
     """
 
     image_path: str | None
     ok: bool
     error: str | None = None
     usage: CallUsage | None = None
+    image_bytes: bytes | None = None
 
 
 _OUTFIT_CONFLICT_RULE = (
@@ -252,7 +257,13 @@ def generate_image(
     out.write_bytes(data)
     if meter is not None:
         record_image(meter, resolved_model)
-    return GenerationResult(image_path=str(out), ok=True, error=None, usage=extract_usage(response))
+    return GenerationResult(
+        image_path=str(out),
+        ok=True,
+        error=None,
+        usage=extract_usage(response),
+        image_bytes=data,
+    )
 
 
 def call_llm(

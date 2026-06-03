@@ -31,8 +31,12 @@ Design rules carried over from the Gradio layer:
 
 from __future__ import annotations
 
+import contextlib
+import html
+import io
 import json
 import os
+import re
 import secrets
 import shutil
 import tempfile
@@ -166,9 +170,15 @@ _SCREEN_TO_PHASE: dict[ScreenId, str] = {
 
 
 class ExtractRequest(BaseModel):
-    """Body of ``POST /api/extract`` — the pasted story text."""
+    """Body of ``POST /api/extract``.
+
+    ``text`` is the pasted story. ``from_upload`` tells the server to extract from
+    the uploaded book held on the session (``story_text``) instead of ``text`` —
+    set when a large book froze the textarea.
+    """
 
     text: str = ""
+    from_upload: bool = False
 
 
 class CreateRequest(BaseModel):
@@ -636,6 +646,103 @@ def _build_archive(state: CharacterState) -> Path:
     return Path(tmp.name)
 
 
+# Uploaded-story text extraction («Загрузить файл» on the start screen). Accepts
+# a whole book — fb2 (priority), epub, docx, txt/md, html, rtf — extracted to
+# plain text with the stdlib only (no extra dependency). The full text is kept
+# server-side (session) and never echoed into the SPA; past _STORY_FREEZE_CHARS
+# the textarea is frozen. NOTE: the Space proxy drops bodies over ~2 MB, so very
+# large e-books may fail on the hosted Space — the FB2 path strips embedded
+# images client-side first to stay small.
+_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+_MAX_STORY_CHARS = 600_000
+_STORY_FREEZE_CHARS = 8_000
+# Binary / proprietary formats we cannot extract with the stdlib.
+_UNSUPPORTED_EXT = (".mobi", ".azw", ".azw3", ".pdf", ".djvu", ".doc")
+
+
+def _decode_text(raw: bytes) -> str:
+    """Decode story bytes, trying UTF-8 then common Russian/Latin fallbacks."""
+    for enc in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", "replace")
+
+
+def _strip_tags(markup: str) -> str:
+    """Drop XML/HTML tags, keeping block boundaries as newlines; unescape entities."""
+    markup = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", markup)
+    markup = re.sub(r"(?i)</(p|div|br|h[1-6]|li|tr|section|title|stanza|v)\s*/?>", "\n", markup)
+    markup = re.sub(r"<[^>]+>", "", markup)
+    return html.unescape(markup)
+
+
+def _collapse_ws(text: str) -> str:
+    """Collapse the whitespace left by tag-stripping into compact paragraphs."""
+    text = re.sub(r"[ \t]+", " ", text)
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
+
+
+def _docx_text(raw: bytes) -> str:
+    """Plain text from a .docx (zip of ``word/document.xml``)."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            xml = archive.read("word/document.xml").decode("utf-8", "replace")
+    except (zipfile.BadZipFile, KeyError, OSError):
+        return ""
+    xml = re.sub(r"</w:p>", "\n", xml)
+    xml = re.sub(r"<w:tab[^>]*/>", "\t", xml)
+    return _strip_tags(xml)
+
+
+def _fb2_text(raw: bytes) -> str:
+    """Plain text from an FB2 (XML): drop embedded <binary> images, keep <body>."""
+    text = _decode_text(raw)
+    text = re.sub(r"(?is)<binary\b.*?</binary>", " ", text)  # base64 cover images
+    bodies = re.findall(r"(?is)<body\b.*?</body>", text)
+    return _strip_tags(" ".join(bodies) if bodies else text)
+
+
+def _epub_text(raw: bytes) -> str:
+    """Plain text from an EPUB (zip of XHTML), chapters in filename order."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            names = sorted(
+                n for n in archive.namelist() if n.lower().endswith((".xhtml", ".html", ".htm"))
+            )
+            parts = [_strip_tags(archive.read(n).decode("utf-8", "replace")) for n in names]
+    except (zipfile.BadZipFile, OSError):
+        return ""
+    return "\n".join(parts)
+
+
+def _rtf_text(raw: bytes) -> str:
+    """Rough plain text from an RTF (strip control words + groups)."""
+    s = raw.decode("latin-1", "replace")
+    s = re.sub(r"\\'[0-9a-fA-F]{2}", " ", s)  # hex escapes
+    s = re.sub(r"\\[a-zA-Z]+-?\d* ?", " ", s)  # control words
+    return re.sub(r"[{}]", "", s)
+
+
+def _extract_text_from_upload(filename: str, raw: bytes) -> str:
+    """Best-effort plain text from an uploaded book (fb2/epub/docx/html/rtf/txt)."""
+    name = (filename or "").lower()
+    if name.endswith(".fb2"):
+        text = _fb2_text(raw)
+    elif name.endswith(".epub"):
+        text = _epub_text(raw)
+    elif name.endswith(".docx"):
+        text = _docx_text(raw)
+    elif name.endswith((".htm", ".html", ".xhtml", ".xml")):
+        text = _strip_tags(_decode_text(raw))
+    elif name.endswith(".rtf"):
+        text = _rtf_text(raw)
+    else:
+        text = _decode_text(raw)
+    return _collapse_ws(text).strip()[:_MAX_STORY_CHARS]
+
+
 # Reads from the HF Storage Bucket (Xet FUSE) are slow (a full 775 KB image took
 # ~12s on prod), so each bucket file is copied to a local cache the first time it
 # is served and everything after — thumbnails *and* the lightbox original — comes
@@ -665,18 +772,52 @@ def _local_image(path: Path) -> Path:
     return local
 
 
-def _warm_image_path(image_path: str | None) -> None:
-    """Best-effort, OFF-critical-path pre-copy of a fresh frame into the cache.
+# Local serve cache: a freshly generated frame's bytes, written straight from
+# memory at generation time (no Storage-Bucket read). Keyed by a STABLE name
+# ``{cid}__{step}.png`` (the mtime-based _IMG_CACHE key is unreliable on Xet,
+# which re-materializes files), so once written, every view is a fast local hit.
+_SERVE_CACHE = _IMG_CACHE / "serve"
 
-    The bucket (Xet FUSE) is slow on first read. Warming the local cache helps a
-    later view, but it MUST NOT run synchronously inside the generate endpoint —
-    a multi-second bucket read there would push the generate response past client
-    / proxy timeouts. So we fire it on a daemon thread and return immediately;
-    :func:`_local_image` is self-contained (atomic copy, degrades to the bucket
-    path on error), so a racing ``/image`` GET stays correct either way.
+
+def _serve_cache_path(character_id: str, step_key: str) -> Path:
+    """Stable local serve-cache path for one character frame."""
+    return _SERVE_CACHE / f"{character_id}__{step_key}.png"
+
+
+def _write_serve_cache(
+    character_id: str, image_path: str | None, image_bytes: bytes | None
+) -> None:
+    """Populate the serve cache from a just-generated frame's in-memory bytes.
+
+    Fast (a local write, no bucket round-trip) so it is safe to call synchronously
+    inside a generate endpoint — the immediately following ``/image`` GET is then
+    served from local disk instead of a slow Xet read. Best-effort: on any error
+    the bucket stays the source of truth.
     """
-    if image_path:
-        threading.Thread(target=_local_image, args=(Path(image_path),), daemon=True).start()
+    if not image_path or not image_bytes:
+        return
+    step_key = Path(image_path).stem
+    try:
+        _SERVE_CACHE.mkdir(parents=True, exist_ok=True)
+        dst = _serve_cache_path(character_id, step_key)
+        tmp = dst.with_name(f"{dst.name}.{threading.get_ident()}.tmp")
+        tmp.write_bytes(image_bytes)
+        tmp.replace(dst)
+    except OSError:
+        pass
+
+
+def _populate_serve_cache_from_bucket(character_id: str, step_key: str, bucket_path: Path) -> None:
+    """Background-read a bucket frame into the serve cache (for saved characters).
+
+    Frames generated this run go through :func:`_write_serve_cache` (in-memory,
+    instant). A character opened from the bucket has no cached bytes, so the first
+    view reads the slow bucket; this fills the (stable-keyed) serve cache off the
+    request thread so subsequent views are fast and don't keep missing the
+    mtime-keyed cache. Best-effort.
+    """
+    with contextlib.suppress(OSError):
+        _write_serve_cache(character_id, f"{step_key}.png", bucket_path.read_bytes())
 
 
 def _serve_image(path: Path, width: int | None) -> Response:
@@ -827,7 +968,11 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         """Run the paid character extraction and return editable drafts."""
         sess = _get_session(request, response)
         meter = CostLedger()
-        sess.extracted_characters = list(extract_characters(body.text or "", meter=meter))
+        # Extract from the uploaded book (held server-side) when the SPA signals
+        # it, else from the pasted text — so a whole book is never round-tripped
+        # through the textarea, and removing the book reverts to the typed text.
+        story = sess.story_text if body.from_upload else (body.text or "")
+        sess.extracted_characters = list(extract_characters(story, meter=meter))
         # Cross-character call -> bill the session ledger only (per screens.handlers).
         sess.cost.merge(meter)
         characters = [
@@ -835,6 +980,38 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             for i, ec in enumerate(sess.extracted_characters)
         ]
         return {"characters": characters, "cost": _cost_payload(sess.cost)}
+
+    @app.post("/api/extract/file")
+    def extract_file(
+        request: Request,
+        response: Response,
+        file: UploadFile = File(...),  # noqa: B008
+    ) -> dict[str, Any]:
+        """Upload a whole book (fb2/epub/docx/txt/html) -> extracted plain text.
+
+        Powers the start-screen «Загрузить файл» button. The full text is stored
+        on the session (``story_text``) and used by «Найти героев»; it is NOT
+        echoed back when large — past ``_STORY_FREEZE_CHARS`` the response carries
+        only metadata and the SPA freezes the textarea. Free (no LLM).
+        """
+        sess = _get_session(request, response)
+        name = file.filename or ""
+        if name.lower().endswith(_UNSUPPORTED_EXT):
+            raise HTTPException(
+                status_code=415,
+                detail="формат не поддерживается — конвертируйте в fb2, epub, txt или docx",
+            )
+        raw = file.file.read(_MAX_UPLOAD_BYTES + 1)
+        if len(raw) > _MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="файл слишком большой")
+        text = _extract_text_from_upload(name, raw)
+        if not text:
+            raise HTTPException(status_code=422, detail="не удалось прочитать текст из файла")
+        sess.story_text = text
+        frozen = len(text) > _STORY_FREEZE_CHARS
+        # Big book: return metadata only (the SPA freezes the textarea). Small
+        # file: also return the text so it lands in the editable textarea.
+        return {"name": name, "chars": len(text), "frozen": frozen, "text": "" if frozen else text}
 
     @app.post("/api/translate")
     def translate(body: TranslateRequest, request: Request, response: Response) -> dict[str, Any]:
@@ -1076,7 +1253,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         result = generate_passport_frame(
             state, body.step_key, regenerate=body.regenerate, meter=meter
         )
-        _warm_image_path(result.image_path)
+        _write_serve_cache(character_id, result.image_path, result.image_bytes)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         state.current_step = body.step_key
@@ -1105,12 +1282,26 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/character/{character_id}/image/{step_key}")
     def frame_image(character_id: str, step_key: str, w: int | None = None) -> Response:
-        """Serve a character's generated frame ``refs/<step_key>.png`` (``?w=`` thumbnail)."""
+        """Serve a character's generated frame (``?w=`` thumbnail).
+
+        Prefers the local serve cache (written from memory at generation time, so
+        a fresh frame is fast and never hits the slow Storage Bucket). Falls back
+        to the bucket for frames not generated this run, and fills the serve cache
+        in the background so the next view of a saved character is fast too.
+        """
         if not step_key.replace("_", "").isalnum():
             raise HTTPException(status_code=400, detail="bad step key")
+        served = _serve_cache_path(character_id, step_key)
+        if served.is_file():
+            return _serve_image(served, w)
         path = character_asset(character_id, f"{REFS_DIR}/{step_key}.png")
         if not path.is_file():
             raise HTTPException(status_code=404, detail="no image")
+        threading.Thread(
+            target=_populate_serve_cache_from_bucket,
+            args=(character_id, step_key, path),
+            daemon=True,
+        ).start()
         return _serve_image(path, w)
 
     @app.get("/api/character/{character_id}/emotions")
@@ -1166,7 +1357,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="emotion index out of range")
         meter = CostLedger()
         result = generate_emotion(state, body.index, meter=meter)
-        _warm_image_path(result.image_path)
+        _write_serve_cache(character_id, result.image_path, result.image_bytes)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         save_state(state)
@@ -1185,7 +1376,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             set_base_emotion(state, True, body.value)
         meter = CostLedger()
         result = generate_base_emotion(state, meter=meter)
-        _warm_image_path(result.image_path)
+        _write_serve_cache(character_id, result.image_path, result.image_bytes)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         save_state(state)
@@ -1252,7 +1443,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             set_outfit_prompt(state, outfit_step(state.outfits[body.index].id), body.prompt)
         meter = CostLedger()
         result = generate_outfit_scene(state, body.index, scene, meter=meter)
-        _warm_image_path(result.image_path)
+        _write_serve_cache(character_id, result.image_path, result.image_bytes)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         save_state(state)
@@ -1318,7 +1509,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             set_outfit_detail_prompt(state, outfit_detail_step(outfit.id, body.n), body.prompt)
         meter = CostLedger()
         result = generate_outfit_detail(state, body.index, body.n, meter=meter)
-        _warm_image_path(result.image_path)
+        _write_serve_cache(character_id, result.image_path, result.image_bytes)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         save_state(state)
@@ -1407,7 +1598,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             set_prop_shot_prompt(state, prop_shot_step(prop.id, body.n), body.prompt)
         meter = CostLedger()
         result = generate_prop_shot(state, body.index, body.n, meter=meter)
-        _warm_image_path(result.image_path)
+        _write_serve_cache(character_id, result.image_path, result.image_bytes)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         save_state(state)

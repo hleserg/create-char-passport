@@ -96,5 +96,11 @@ def render_step_image(
     if out.exists():
         archive_to_rejected(char_dir, step_key, out)
     pending.replace(out)
-    ok = GenerationResult(image_path=str(out), ok=True, error=None, usage=result.usage)
+    ok = GenerationResult(
+        image_path=str(out),
+        ok=True,
+        error=None,
+        usage=result.usage,
+        image_bytes=result.image_bytes,
+    )
     return ok, f"{REFS_DIR}/{step_key}.png"

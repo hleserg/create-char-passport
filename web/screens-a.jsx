@@ -51,6 +51,8 @@ function ScreenStart({ ctx }) {
   const [stylePrompt, setStylePrompt] = useS1("");
   const [styleBusy, setStyleBusy] = useS1(false);
   const [confirmReset, setConfirmReset] = useS1(false);
+  const [fileBusy, setFileBusy] = useS1(false);
+  const [book, setBook] = useS1(null); // {name, chars} when a big book is loaded (textarea frozen)
 
   // Bootstrap from the backend (session + saved characters + project style).
   // Degrades silently to sample data when no backend is present (static preview).
@@ -97,11 +99,36 @@ function ScreenStart({ ctx }) {
     setStyleBusy(false);
   }
 
-  // Paste -> real paid extraction. Returning the Promise keeps the AI button
-  // shimmering for the true round-trip; a missing backend falls back to demo names.
+  // «Загрузить файл»: upload a whole book (fb2/epub/docx/txt/html). The server
+  // extracts the text and keeps it; a big book freezes the textarea (we never
+  // dump the text into the form). FB2 embeds a base64 cover that bloats the file
+  // past the Space upload limit, so strip <binary> client-side first (fb2 is XML).
+  async function onPickStoryFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setFileBusy(true);
+    try {
+      let upload = file;
+      if (/\.fb2$/i.test(file.name)) {
+        const raw = await file.text();
+        upload = new File([raw.replace(/<binary[\s\S]*?<\/binary>/gi, "")], file.name, { type: "text/xml" });
+      }
+      const d = await window.api.extractFile(upload);
+      if (d && d.frozen) { setBook({ name: d.name || file.name, chars: d.chars || 0 }); setText(""); }
+      else { setText((d && d.text) || ""); setBook(null); }
+    } catch (err) {
+      try { setText(await file.text()); setBook(null); } catch (e2) { /* unreadable: ignore */ }
+    }
+    setFileBusy(false);
+  }
+
+  // Paste/upload -> real paid extraction. Returning the Promise keeps the AI
+  // button shimmering for the true round-trip; a missing backend falls back to
+  // demo names. With a loaded book the server reads its stored text (from_upload).
   async function findHeroes() {
     try {
-      const data = await window.api.extract(text);
+      const data = await window.api.extract(text, !!book);
       setFound((data.characters || []).map((c) => c.name));
     } catch (e) {
       setFound(["Герон", "Тайра", "Луций"]);
@@ -227,10 +254,24 @@ function ScreenStart({ ctx }) {
             действующих героев — вам не придётся вписывать имена вручную. Дальше выберете, кого собирать.</p>
         </Help>
         <Field ru="Вставьте текст или загрузите файл">
-          <textarea className="in" rows={5} placeholder="Например: «Герон вышел из таверны, поправил тяжёлый меч за спиной…»  — вставьте сюда главу или сцену." value={text} onChange={(e) => setText(e.target.value)} />
+          {book ? (
+            <div className="in" style={{ display: "flex", alignItems: "center", gap: 10, cursor: "default" }}>
+              <span style={{ fontSize: 22 }}>📖</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <b style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Книга загружена: {book.name}</b>
+                <span className="muted" style={{ fontSize: 12.5 }}>≈ {book.chars.toLocaleString("ru-RU")} символов — текст не выводим, он целиком уйдёт в поиск героев. Нажмите «Найти героев».</span>
+              </div>
+              <button className="btn ghost sm" onClick={() => { setBook(null); setText(""); }}>✕ убрать</button>
+            </div>
+          ) : (
+            <textarea className="in" rows={5} placeholder="Например: «Герон вышел из таверны, поправил тяжёлый меч за спиной…»  — вставьте сюда главу или загрузите книгу (fb2, epub, txt, docx)." value={text} onChange={(e) => setText(e.target.value)} />
+          )}
         </Field>
         <div className="btnrow split">
-          <button className="btn ghost sm">📎 Загрузить файл (.txt, .docx)</button>
+          <label className="btn ghost sm" style={{ cursor: fileBusy ? "wait" : "pointer" }}>
+            <input type="file" accept=".fb2,.epub,.txt,.md,.text,.docx,.htm,.html,.xhtml,.xml,.rtf" style={{ display: "none" }} disabled={fileBusy} onChange={onPickStoryFile} />
+            📎 {fileBusy ? "Читаю книгу…" : "Загрузить книгу (fb2, epub, txt, docx)"}
+          </label>
           <AIButton onClick={findHeroes}>Найти героев в тексте</AIButton>
         </div>
 

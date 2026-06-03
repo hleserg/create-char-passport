@@ -95,6 +95,10 @@ class WizardSession:
     # Typed ``Any`` to avoid a router -> wizard import cycle; holds
     # ``wizard.ExtractedCharacter`` instances.
     extracted_characters: list[Any] = field(default_factory=list)
+    # Full text of an uploaded story/book (fb2/epub/txt/…). Held server-side so a
+    # whole book is never echoed into the SPA textarea; extraction reads it here
+    # when the user hasn't typed anything. Empty until a file is uploaded.
+    story_text: str = ""
     # Per-step edits proposed by the last "Правка с ИИ" review, awaiting the
     # user's per-block Accept. Typed ``Any`` (holds ``ai.review.EditBlock``) to
     # avoid a router -> ai import cycle. Cleared when a new review runs.

@@ -313,7 +313,13 @@ def generate_passport_frame(
         state.base_outfit.ref = None
     if regenerate and is_ref_frame(step_key):
         _flag_downstream_stale(state, step_key)
-    return GenerationResult(image_path=str(out), ok=True, error=None, usage=result.usage)
+    return GenerationResult(
+        image_path=str(out),
+        ok=True,
+        error=None,
+        usage=result.usage,
+        image_bytes=result.image_bytes,
+    )
 
 
 def approve_passport_frame(state: CharacterState, step_key: str) -> None:

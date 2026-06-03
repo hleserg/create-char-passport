@@ -53,9 +53,24 @@
     styleRefUrl(key, w) {
       return "/api/style/ref/" + encodeURIComponent(key) + (w ? "?w=" + w : "");
     },
-    /* paste a story -> extracted character drafts ({characters, cost}) */
-    extract(text) {
-      return jsonFetch("/api/extract", { method: "POST", body: JSON.stringify({ text: text }) });
+    /* paste a story -> extracted character drafts ({characters, cost}). When
+       fromUpload is true the server extracts from the uploaded book it holds
+       (a big book that froze the textarea), ignoring `text`. */
+    extract(text, fromUpload) {
+      return jsonFetch("/api/extract", {
+        method: "POST",
+        body: JSON.stringify({ text: text, from_upload: !!fromUpload }),
+      });
+    },
+    /* upload a story FILE (.txt/.md/.docx, multipart) -> plain text ({text}) */
+    extractFile(file) {
+      const fd = new FormData();
+      fd.append("file", file);
+      return fetch("/api/extract/file", { method: "POST", credentials: "same-origin", body: fd })
+        .then((r) => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        });
     },
     /* RU description -> EN layer prompt (+ other-layer suggestions). When
        `current` is a non-empty existing prompt, `text` is applied as a change
