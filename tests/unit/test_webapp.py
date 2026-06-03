@@ -94,6 +94,25 @@ def test_session_sets_cookie_then_reuses_it(client: TestClient) -> None:
     assert again.status_code == 200
 
 
+def test_session_cookie_samesite_none_secure_over_https(client: TestClient) -> None:
+    # Behind the HF proxy (X-Forwarded-Proto: https) the cookie MUST be
+    # SameSite=None; Secure, or it is dropped in the huggingface.co iframe and the
+    # whole session silently breaks (drafts lost, /api/character 404s).
+    res = client.get("/api/session", headers={"x-forwarded-proto": "https"})
+    setc = res.headers.get("set-cookie", "").lower()
+    assert "cph_session=" in setc
+    assert "samesite=none" in setc
+    assert "secure" in setc
+
+
+def test_session_cookie_lax_over_plain_http(client: TestClient) -> None:
+    # Plain HTTP (local dev): Secure cookies are not stored, so fall back to Lax.
+    res = client.get("/api/session")
+    setc = res.headers.get("set-cookie", "").lower()
+    assert "samesite=lax" in setc
+    assert "secure" not in setc
+
+
 def test_session_lists_saved_characters(client: TestClient, bucket: Path) -> None:
     state = blank_state("Геро́н")
     state.current_step = "passport_face"

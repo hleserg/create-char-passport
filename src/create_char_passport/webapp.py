@@ -933,17 +933,40 @@ def _apply_project_style(state: CharacterState) -> None:
         set_style_ref(state, str(refs[0]))
 
 
+def _request_is_https(request: Request) -> bool:
+    """True when the user's connection is HTTPS (incl. behind the HF proxy).
+
+    The HF Spaces proxy terminates TLS and forwards plain HTTP to uvicorn, so
+    ``request.url.scheme`` is ``http`` there; the ``X-Forwarded-Proto`` header
+    carries the real client scheme.
+    """
+    return (
+        request.headers.get("x-forwarded-proto", "").lower() == "https"
+        or request.url.scheme == "https"
+    )
+
+
 def _get_session(request: Request, response: Response) -> WizardSession:
-    """Resolve the cookie-bound session, minting + setting the cookie if absent."""
+    """Resolve the cookie-bound session, minting + setting the cookie if absent.
+
+    On HTTPS (the deployed Space) the cookie is ``SameSite=None; Secure`` so it
+    survives the cross-site iframe that ``huggingface.co/spaces/...`` embeds the
+    app in — a ``Lax`` cookie is dropped there, which silently breaks the whole
+    session (extraction drafts lost, ``/api/character`` 404s, nothing persists).
+    Plain HTTP (local dev) falls back to ``Lax`` since ``Secure`` cookies are not
+    stored over HTTP.
+    """
     sid = request.cookies.get(_SESSION_COOKIE)
     if not sid or sid not in _SESSIONS:
         sid = secrets.token_urlsafe(16)
         _SESSIONS[sid] = WizardSession()
+        https = _request_is_https(request)
         response.set_cookie(
             _SESSION_COOKIE,
             sid,
             httponly=True,
-            samesite="lax",
+            samesite="none" if https else "lax",
+            secure=https,
             max_age=60 * 60 * 24 * 7,
         )
     return _SESSIONS[sid]
