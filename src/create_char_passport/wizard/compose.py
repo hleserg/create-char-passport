@@ -21,30 +21,47 @@ from create_char_passport.gen import call_llm
 from create_char_passport.state import CostLedger, coerce_value
 
 COMPOSE_PROMPT: str = """\
-You turn a character trait sheet into layer-isolated ENGLISH prompt drafts for a
-consistent character-reference pipeline. Return STRICTLY a JSON object, no markdown
-fences, no explanation:
+You turn a Russian character trait sheet into layer-isolated ENGLISH prompt
+drafts for a consistent character-reference image pipeline. Read the Russian
+traits and особые приметы faithfully, then write DETAILED, concrete, VISUAL
+English prompts — comma-separated descriptor phrases a text-to-image model can
+actually render, not vague adjectives. Make implied physical detail explicit
+(e.g. old age → wrinkles, grey/thinning hair, age spots; a «воин»/soldier →
+weathered skin, muscular build; «полный» → round face, double chin, heavy
+frame), but NEVER invent traits that contradict the sheet, and never add a trait
+the sheet gives no basis for.
+
+Return STRICTLY a JSON object, no markdown fences, no explanation:
 {
-  "face":   "[FACE] anatomy ONLY — face shape, nose, lips, eyes, hair, skin, plus
-             any face-specific permanent marks (facial scar, eye patch, freckles,
-             beard). NO expression/emotion, NO pose, NO clothing, NO background.",
-  "body":   "[BODY] build / proportions ONLY, plus body-specific permanent marks
-             under clothing (tattoos, body scars, missing limb). NO clothing,
-             NO face, NO pose, NO mood.",
-  "outfit": "[OUTFIT] base clothing ONLY — garments, cut, material, colour. NO
-             anatomy, NO pose, NO expression, NO background.",
+  "face": "[FACE] facial anatomy ONLY, detailed: face shape, forehead, eyebrows,
+           eyes (shape + colour), nose, lips/mouth, cheekbones, jawline/chin,
+           ears, skin (tone + texture), facial hair, hairstyle (length, cut,
+           colour, texture), plus face-specific permanent marks (facial scar, eye
+           patch, freckles, moles). ~8-18 comma-separated descriptors. NO
+           expression/emotion, NO pose, NO clothing, NO background.",
+  "body": "[BODY] build / proportions ONLY, detailed: overall physique, apparent
+           height, shoulders, frame, musculature or softness, posture, hands,
+           plus body-specific permanent marks under clothing (tattoo + its
+           placement, body scars, missing limb). NO clothing, NO face, NO pose,
+           NO mood.",
+  "outfit": "[OUTFIT] base clothing ONLY, detailed: each garment named with its
+            cut, fabric/material, colour and trim, plus footwear and worn
+            accessories (belt, gloves, cloak). NO anatomy, NO pose, NO
+            expression, NO background.",
   "base_emotion": "a short default EXPRESSION in English (e.g. 'grim, brooding'),
-             derived from the role/character. 2-4 words. NO prose."
+            derived from the role / personality. 2-4 words. NO prose."
 }
 
 Rules:
-- Split the "details" / особые приметы across face vs body by what they are.
+- Split особые приметы / "details" across face vs body by what each one is.
 - Keep each layer strictly to its own concern; never leak expression into face,
   clothing into body, or anatomy into outfit.
-- English only. If the table has nothing for a layer, use an empty string "".
+- Faithful first, detailed second: every descriptor must be stated in, or a
+  reasonable visual implication of, the sheet. English only.
+- If the sheet genuinely has nothing for a layer, use an empty string "".
 - The answer is the JSON object only.
 
-CHARACTER TRAIT TABLE (JSON):
+CHARACTER TRAIT TABLE (JSON, values may be in Russian):
 """
 
 _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)

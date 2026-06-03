@@ -54,6 +54,7 @@ function ScreenStart({ ctx }) {
   const [fileBusy, setFileBusy] = useS1(false);
   const [book, setBook] = useS1(null); // {name, chars} when a big book is loaded (textarea frozen)
   const [fileErr, setFileErr] = useS1("");
+  const [name, setName] = useS1(""); // create-by-name (primary path)
 
   // Bootstrap from the backend (session + saved characters + project style).
   // Degrades silently to sample data when no backend is present (static preview).
@@ -171,6 +172,21 @@ function ScreenStart({ ctx }) {
     ctx.go("data");
   }
 
+  // PRIMARY path: create an empty character from just a name -> hand-filled anketa.
+  async function createByName() {
+    const nm = name.trim();
+    if (!nm) return;
+    ctx.setActiveChar(nm);
+    try {
+      const data = await window.api.createCharacter({ name: nm, table: {}, face: "", body: "", outfit: "" });
+      ctx.setActiveCharId(data && data.character ? data.character.id : null);
+    } catch (e) {
+      ctx.setActiveCharId(null);
+    }
+    ctx.go("data");
+  }
+  const nameHasCyrillic = /[а-яё]/i.test(name);
+
   return (
     <div>
       <div className="eyebrow">Шаг за шагом</div>
@@ -269,11 +285,44 @@ function ScreenStart({ ctx }) {
         );
       })()}
 
-      {/* STORY TEXT */}
-      <Panel title="Текст вашей истории" icon="📖" badge={<span className="badge now">отсюда берём героев</span>}>
+      {/* CREATE BY NAME — primary path */}
+      <Panel title="Новый герой" icon="🧍" badge={<span className="badge now">начните отсюда</span>}>
+        <p className="muted" style={{ marginTop: 0, fontSize: 13.5 }}>
+          Введите имя героя и заполните анкету вручную на следующем шаге — по-русски.
+          Английские промты ИИ соберёт из анкеты сам, знать английский не нужно.
+        </p>
+        <Field
+          ru="Имя героя"
+          hint={
+            <div className="tip">
+              <span className="ic">💡</span>
+              <span>
+                Можно по-русски. Для имени папки оно автоматически транслитерируется в латиницу
+                {name.trim() && nameHasCyrillic ? <> (напр. «{name.trim()}»).</> : <>.</>}
+              </span>
+            </div>
+          }
+        >
+          <input
+            className="in"
+            value={name}
+            placeholder="Например: Барон фон Графф"
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") createByName(); }}
+          />
+        </Field>
+        <div className="btnrow end">
+          <button className="btn primary" disabled={!name.trim()} onClick={createByName}>
+            Создать и заполнить анкету →
+          </button>
+        </div>
+      </Panel>
+
+      {/* STORY TEXT — optional alternative */}
+      <Panel title="Или: найти героев в готовом тексте" icon="📖" badge={<span className="badge ro">опция</span>} collapsible defaultCollapsed>
         <Help title="Зачем вставлять текст?" defaultOpen={false}>
-          <p>Вставьте сюда отрывок сценария или книги. Нейросеть прочитает его и сама найдёт всех
-            действующих героев — вам не придётся вписывать имена вручную. Дальше выберете, кого собирать.</p>
+          <p>Если у вас уже есть текст истории — вставьте отрывок или загрузите книгу, и ИИ сам найдёт
+            героев и предзаполнит их анкеты. Это необязательно: можно просто создать героя по имени выше.</p>
         </Help>
         <Field ru="Вставьте текст или загрузите файл">
           {book ? (

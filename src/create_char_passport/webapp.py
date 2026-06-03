@@ -1078,6 +1078,8 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         """
         sess = _get_session(request, response)
         if body.table is not None or body.face is not None or body.body is not None:
+            if not (body.name or "").strip():
+                raise HTTPException(status_code=422, detail="имя героя обязательно")
             draft = ExtractedCharacter(
                 name=body.name,
                 table=body.table or {},

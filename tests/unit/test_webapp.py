@@ -252,6 +252,22 @@ def test_create_character_persists_and_serialises(
     assert client.get("/api/character/geron").status_code == 200  # persisted
 
 
+def test_create_character_by_name_only_empty_anketa(client: TestClient, bucket: Path) -> None:
+    # Primary path: just a name (Russian) + empty draft -> blank, persisted
+    # character with a transliterated id, ready for a hand-filled anketa.
+    res = client.post("/api/character", json={"name": "Иван", "table": {}})
+    assert res.status_code == 200
+    char = res.json()["character"]
+    assert char["id"] == "ivan"  # transliterated for the folder id
+    assert char["name"] == "Иван"  # display name stays Russian
+    assert all(v == "" for v in char["card"].values())  # empty anketa to fill by hand
+    assert client.get("/api/character/ivan").status_code == 200
+
+
+def test_create_character_empty_name_422(client: TestClient, bucket: Path) -> None:
+    assert client.post("/api/character", json={"name": "  ", "table": {}}).status_code == 422
+
+
 def test_create_character_from_posted_draft_without_session(
     client: TestClient, bucket: Path
 ) -> None:
