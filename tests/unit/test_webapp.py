@@ -580,6 +580,14 @@ def test_prop_shot_generate_add_delete(
     assert len(rem["props"]["items"][0]["shots"]) == 1
 
 
+def test_props_enable_toggle(client: TestClient, bucket: Path) -> None:
+    cid = _character_with_prop()
+    off = client.post(f"/api/character/{cid}/props/enable", json={"enabled": False}).json()
+    assert off["props"]["enabled"] is False
+    on = client.post(f"/api/character/{cid}/props/enable", json={"enabled": True}).json()
+    assert on["props"]["enabled"] is True
+
+
 def test_prop_bad_index_and_404(client: TestClient, bucket: Path) -> None:
     cid = _character_with_prop()
     assert client.post(f"/api/character/{cid}/props/shot/add", json={"index": 9}).status_code == 400
