@@ -64,6 +64,13 @@ def test_missing_web_dir_skips_mount(bucket: Path, tmp_path: Path) -> None:
     assert api.get("/").status_code == 404
 
 
+def test_web_dir_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("CPH_WEB_DIR", raising=False)
+    assert webapp._web_dir_from_env() is None
+    monkeypatch.setenv("CPH_WEB_DIR", str(tmp_path))
+    assert webapp._web_dir_from_env() == tmp_path
+
+
 # --------------------------------------------------------------------------- #
 # session + cookie
 # --------------------------------------------------------------------------- #
