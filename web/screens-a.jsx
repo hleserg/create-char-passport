@@ -19,8 +19,30 @@ function ScreenStart({ ctx }) {
   const [styleDone, setStyleDone] = useS1(true);
   const [text, setText] = useS1("");
   const [extracted, setExtracted] = useS1(false);
+  const [found, setFound] = useS1([]);
+  const [saved, setSaved] = useS1(SAMPLE_CHARS);
 
-  const found = ["Герон", "Тайра", "Луций"];
+  // Bootstrap from the backend (session cookie + saved characters). Degrades
+  // silently to the sample cast when no backend is present (static preview).
+  React.useEffect(() => {
+    let alive = true;
+    window.api.session()
+      .then((d) => { if (alive && Array.isArray(d.saved_characters)) setSaved(d.saved_characters); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  // Paste -> real paid extraction. Returning the Promise keeps the AI button
+  // shimmering for the true round-trip; a missing backend falls back to demo names.
+  async function findHeroes() {
+    try {
+      const data = await window.api.extract(text);
+      setFound((data.characters || []).map((c) => c.name));
+    } catch (e) {
+      setFound(["Герон", "Тайра", "Луций"]);
+    }
+    setExtracted(true);
+  }
 
   return (
     <div>
@@ -79,7 +101,7 @@ function ScreenStart({ ctx }) {
         </Field>
         <div className="btnrow split">
           <button className="btn ghost sm">📎 Загрузить файл (.txt, .docx)</button>
-          <AIButton onClick={() => setExtracted(true)}>Найти героев в тексте</AIButton>
+          <AIButton onClick={findHeroes}>Найти героев в тексте</AIButton>
         </div>
 
         {extracted && (
@@ -104,7 +126,7 @@ function ScreenStart({ ctx }) {
         <table className="t">
           <thead><tr><th>Имя</th><th>Статус</th><th style={{ width: 230 }}></th></tr></thead>
           <tbody>
-            {SAMPLE_CHARS.map((c) => (
+            {saved.map((c) => (
               <tr key={c.id}>
                 <td style={{ fontWeight: 700 }}>{c.name}</td>
                 <td>{c.status === "готов" ? <span className="badge done">✓ готов</span> : <span className="badge now">{c.status}</span>}</td>

@@ -338,13 +338,23 @@ function Preview({ kind, cap, state = "empty", sub, small }) {
    ========================================================= */
 function AIButton({ children, onClick, kind = "check", small, busyMs = 1100 }) {
   const [busy, setBusy] = useState(false);
-  function handle(e) {
+  async function handle(e) {
     if (busy) return;
     setBusy(true);
     if (window.__bumpCost) window.__bumpCost(2);
-    // Shimmer while the LLM is queried. The prototype simulates the round-trip;
-    // the real backend (P2) clears `busy` when the API responds.
-    setTimeout(() => { setBusy(false); onClick && onClick(e); }, busyMs);
+    // Shimmer while the LLM is queried. A wired button returns a Promise from
+    // onClick -> the shimmer lasts the *real* round-trip. An un-wired demo
+    // button returns nothing -> fall back to a fixed simulated delay.
+    try {
+      const r = onClick && onClick(e);
+      if (r && typeof r.then === "function") {
+        await r;
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, busyMs));
+      }
+    } finally {
+      setBusy(false);
+    }
   }
   return (
     <button
