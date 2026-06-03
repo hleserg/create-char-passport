@@ -88,6 +88,7 @@ def test_round_trip_full_state() -> None:
     }
     state.current_step = "passport_face"
     state.dataset_compositions = ["walking", "sitting"]
+    state.archived = True
 
     blob = state_to_dict(state)
     restored = state_from_dict(blob)
@@ -108,6 +109,7 @@ def test_round_trip_full_state() -> None:
     assert restored.steps["passport_face"].prompt_layers.face == "broad nose"
     assert restored.current_step == "passport_face"
     assert restored.dataset_compositions == ["walking", "sitting"]
+    assert restored.archived is True
 
 
 def make_full_emotions() -> Emotions:

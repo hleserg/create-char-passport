@@ -124,8 +124,10 @@ function App() {
         )}
       </div>
 
-      <Stepper current={phase} done={done} onNav={(k) => {
-        // allow navigating to any phase up to current+done for the demo
+      <Stepper current={phase} done={done} locked={!activeCharId} onNav={(k) => {
+        // Steps past «Старт» are frozen until a character is chosen (the Stepper
+        // ignores clicks on locked steps); programmatic go() from create/open is
+        // unaffected because it sets activeCharId in the same render.
         go(k);
       }} />
 
