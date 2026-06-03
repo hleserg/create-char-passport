@@ -30,7 +30,10 @@
     /* append reference image FILES (multipart — the Space proxy drops big JSON
        bodies); the 5th ref triggers the LLM draft. Accepts a File or File[]. */
     styleRefs(files) {
-      const list = Array.isArray(files) ? files : [files];
+      // Tolerate an empty/absent arg: posting no files re-triggers the LLM
+      // style draft (recovery when the 5th-ref draft came back empty). Filtering
+      // out falsy entries avoids appending the literal string "undefined".
+      const list = (files == null ? [] : Array.isArray(files) ? files : [files]).filter(Boolean);
       const fd = new FormData();
       list.forEach((f) => fd.append("files", f));
       return fetch("/api/style/refs", { method: "POST", credentials: "same-origin", body: fd })
@@ -137,6 +140,13 @@
     },
     emotionEnable(id, enabled) {
       return jsonFetch("/api/character/" + encodeURIComponent(id) + "/emotions/enable", {
+        method: "POST",
+        body: JSON.stringify({ enabled: enabled }),
+      });
+    },
+    /* toggle the BASE emotion on/off without generating (preserves its value) */
+    emotionBaseEnable(id, enabled) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/emotions/base/enable", {
         method: "POST",
         body: JSON.stringify({ enabled: enabled }),
       });

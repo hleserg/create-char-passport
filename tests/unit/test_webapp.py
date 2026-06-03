@@ -214,6 +214,20 @@ def test_create_character_persists_and_serialises(
     assert client.get("/api/character/geron").status_code == 200  # persisted
 
 
+def test_create_character_id_collision_does_not_overwrite(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_extracted(client, monkeypatch)
+    first = client.post("/api/character", json={"name": "Герон"}).json()["character"]
+    assert first["id"] == "geron"
+    # A second character whose name slugs to the same id must be suffixed, never
+    # silently overwrite the first (which may already hold paid generations).
+    second = client.post("/api/character", json={"name": "Герон"}).json()["character"]
+    assert second["id"] == "geron-2"
+    assert client.get("/api/character/geron").status_code == 200  # first survives
+    assert client.get("/api/character/geron-2").status_code == 200  # second persisted
+
+
 def test_create_character_unknown_draft_404(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -405,6 +419,27 @@ def test_passport_generate_then_approve(
     assert pp["frames"][0]["approved"] is True
 
 
+def test_passport_generate_sets_and_clears_scene_override(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    monkeypatch.setattr("create_char_passport.wizard.passport.generate_image", _fake_gen_ok)
+    # a custom COMPOSITION is persisted as a per-character scene override + echoed
+    res = client.post(
+        f"/api/character/{cid}/passport/generate",
+        json={"step_key": "passport_face", "composition": "low angle, dramatic backlight"},
+    ).json()
+    face = res["passport"]["frames"][0]
+    assert face["composition"] == "low angle, dramatic backlight"
+    assert face["scene_default"] and face["scene_default"] != face["composition"]
+    # posting the registry default back clears the override (resets to the hardcode)
+    res2 = client.post(
+        f"/api/character/{cid}/passport/generate",
+        json={"step_key": "passport_face", "composition": face["scene_default"]},
+    ).json()
+    assert res2["passport"]["frames"][0]["composition"] == face["scene_default"]
+
+
 def test_passport_generate_failure_reports_error(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -483,6 +518,23 @@ def test_emotions_base_generate(client: TestClient, monkeypatch: pytest.MonkeyPa
     assert res["ok"] is True
     assert res["emotions"]["base"]["value"] == "grim, brooding"
     assert res["emotions"]["base"]["has_image"] is True
+
+
+def test_emotions_base_enable_toggles_and_preserves_value(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    _stub_emotion_gen(monkeypatch)
+    # set a value via the (paid) generate route, then toggle OFF without generating
+    client.post(f"/api/character/{cid}/emotions/base", json={"value": "grim, brooding"})
+    off = client.post(f"/api/character/{cid}/emotions/base/enable", json={"enabled": False}).json()
+    assert off["emotions"]["base"]["enabled"] is False
+    assert off["emotions"]["base"]["value"] == "grim, brooding"  # value preserved, not wiped
+    # and it persists (no in-memory-only toggle): reload from the bucket
+    reloaded = client.get(f"/api/character/{cid}/emotions").json()["emotions"]
+    assert reloaded["base"]["enabled"] is False
+    on = client.post(f"/api/character/{cid}/emotions/base/enable", json={"enabled": True}).json()
+    assert on["emotions"]["base"]["enabled"] is True
 
 
 def test_emotions_generate_bad_index_400(
@@ -715,6 +767,29 @@ def test_archive_download(client: TestClient, bucket: Path) -> None:
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/zip"
     assert res.content[:2] == b"PK"  # zip magic
+
+
+def test_archive_approved_holds_only_golden_frames(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+    import zipfile
+
+    cid = _make_character(client, monkeypatch)
+    monkeypatch.setattr("create_char_passport.wizard.passport.generate_image", _fake_gen_ok)
+    # generate a frame but do NOT approve it -> must NOT land in approved/
+    client.post(f"/api/character/{cid}/passport/generate", json={"step_key": "passport_face"})
+    before = zipfile.ZipFile(
+        io.BytesIO(client.get(f"/api/character/{cid}/archive").content)
+    ).namelist()
+    assert "passport.json" in before
+    assert not [n for n in before if n.startswith("approved/")]  # nothing approved yet
+    # approve it -> now it is a golden frame in approved/
+    client.post(f"/api/character/{cid}/passport/approve", json={"step_key": "passport_face"})
+    after = zipfile.ZipFile(
+        io.BytesIO(client.get(f"/api/character/{cid}/archive").content)
+    ).namelist()
+    assert "approved/passport_face.png" in after
 
 
 def test_finish_and_archive_404(client: TestClient) -> None:

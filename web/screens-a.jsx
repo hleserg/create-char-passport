@@ -87,6 +87,15 @@ function ScreenStart({ ctx }) {
     try { const d = await window.api.styleReset(); if (d.style) { setStyle(d.style); setStylePrompt(""); } }
     catch (e) { setStyle({ prompt: "", approved: false, ref_keys: [], ref_count: 0, locked: false }); setStylePrompt(""); }
   }
+  // Recovery when the 5th-ref auto-draft came back empty (LLM timeout / rate
+  // limit): re-trigger the draft with no new files (empty POST re-enters the
+  // draft branch) so the user isn't stranded with 5 refs and no prompt.
+  async function redraftStyle() {
+    setStyleBusy(true);
+    try { const d = await window.api.styleRefs([]); if (d.style) { setStyle(d.style); setStylePrompt(d.style.prompt || ""); } }
+    catch (e) { /* offline preview: ignore */ }
+    setStyleBusy(false);
+  }
 
   // Paste -> real paid extraction. Returning the Promise keeps the AI button
   // shimmering for the true round-trip; a missing backend falls back to demo names.
@@ -170,6 +179,16 @@ function ScreenStart({ ctx }) {
                 {styleBusy
                   ? <p className="tip"><span className="ic">✦</span><span>{st.ref_count >= 4 ? "ИИ описывает стиль по референсам…" : "Загружаю…"}</span></p>
                   : <p className="tip"><span className="ic">ℹ</span><span>Прикреплено <b>{st.ref_count}</b> из 5. На пятом ИИ автоматически опишет стиль.</span></p>}
+                {!styleBusy && st.ref_count >= 5 && (
+                  <>
+                    <div className="notice" style={{ marginTop: 10 }}><span className="ic">⚠️</span><span className="tx">Все 5 примеров загружены, но описание стиля не получилось (ИИ был занят). Нажмите «Описать стиль заново».</span></div>
+                    <div className="btnrow" style={{ marginTop: 10 }}>
+                      <button className="btn primary sm" onClick={redraftStyle}>✦ Описать стиль заново</button>
+                      <span className="spacer" style={{ flex: 1 }}></span>
+                      <button className="btn ghost sm" onClick={() => setConfirmReset(true)}>Изменить стиль (загрузить заново)</button>
+                    </div>
+                  </>
+                )}
               </>
             )}
 
@@ -371,7 +390,7 @@ function ScreenData({ ctx }) {
           marks,
           emotions: { enabled: emoOn, base: { enabled: baseEmoOn, value: baseEmo } },
           outfits: { enabled: outfitsOn, list: outfitList.map((o) => ({ name: o.name, complex: o.complex })) },
-          props: { enabled: propsOn, list: propList.map((p) => ({ name: p.name })) },
+          props: { enabled: propsOn, list: propList.map((p) => ({ name: p.name, shots: p.shots })) },
         });
       } catch (e) { /* offline preview: navigate anyway */ }
     }

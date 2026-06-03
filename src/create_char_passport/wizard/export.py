@@ -196,6 +196,30 @@ def _collect_frames(state: CharacterState) -> list[_Frame]:
     return frames
 
 
+def golden_image_files(state: CharacterState) -> list[tuple[Path, str]]:
+    """Approved character images for the finish archive, as ``(source, arcname)``.
+
+    The golden set (passport + base/series emotions + outfit scenes + dataset)
+    resolved to absolute bucket paths, each paired with a unique
+    ``approved/<file>.png`` archive name. Unlike a raw ``refs/`` glob this
+    excludes the project STYLE reference (not a character frame) and any
+    unapproved / superseded passport frame (those never enter
+    :func:`_collect_frames`). Files missing on disk are skipped.
+    """
+    out: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+    for frame in _collect_frames(state):
+        name = Path(frame.rel_path).name
+        if name in seen:
+            continue
+        src = character_asset(state.character_id, frame.rel_path)
+        if not src.is_file():
+            continue
+        seen.add(name)
+        out.append((src, f"approved/{name}"))
+    return out
+
+
 def _dataset_pose(state: CharacterState, idx: int) -> str:
     """The user's raw dataset pose for frame ``idx`` (no background directive)."""
     return (

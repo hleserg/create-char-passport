@@ -47,7 +47,13 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from create_char_passport.ai.review import apply_step_prompt, check_step, edit_character
-from create_char_passport.gen import SceneId
+from create_char_passport.gen import (
+    SceneId,
+    default_composition,
+    effective_composition,
+    scene_for_step,
+    set_scene_override,
+)
 from create_char_passport.screens.router import ScreenId, WizardSession, resume_screen
 from create_char_passport.state import (
     BASE_EMOTION_STEP,
@@ -96,6 +102,7 @@ from create_char_passport.wizard.emotions import (
     generate_emotion,
     missing_emotion_refs,
 )
+from create_char_passport.wizard.export import golden_image_files
 from create_char_passport.wizard.extraction import extract_characters
 from create_char_passport.wizard.outfits import (
     add_outfit_detail,
@@ -223,12 +230,18 @@ class ComposeRequest(BaseModel):
 
 
 class PassportGenRequest(BaseModel):
-    """Body of ``POST /api/character/{id}/passport/generate``."""
+    """Body of ``POST /api/character/{id}/passport/generate``.
+
+    ``composition`` (when not ``None``) sets this frame's COMPOSITION scene
+    override before generating — blank or registry-equal text clears it, so the
+    «Изменить сцену» dialog can both customise and reset.
+    """
 
     step_key: str
     face: str | None = None
     body: str | None = None
     outfit: str | None = None
+    composition: str | None = None
     regenerate: bool = False
 
 
@@ -430,6 +443,7 @@ def _frame_payload(state: CharacterState, step_key: str) -> dict[str, Any]:
     index = passport_index(step_key)
     record = state.steps.get(step_key)
     editable = editable_layers(step_key)
+    scene = scene_for_step(step_key)
     return {
         "key": step_key,
         "index": index,
@@ -439,6 +453,11 @@ def _frame_payload(state: CharacterState, step_key: str) -> dict[str, Any]:
         "face": state.prompt_layers.face,
         "body": state.prompt_layers.body,
         "outfit": state.base_outfit.prompt,
+        # COMPOSITION (scene) for this frame: the per-character override if set,
+        # else the registry default. ``scene_default`` lets the UI tell whether
+        # the user has customised it (and offer a reset to the hardcode).
+        "composition": effective_composition(state, scene) if scene else "",
+        "scene_default": default_composition(scene) if scene else "",
         "show_body": index >= 1,
         "face_frozen": index >= 1,
         "body_frozen": index >= 2,
@@ -581,8 +600,11 @@ def _build_archive(state: CharacterState) -> Path:
     """Zip the character's golden set into a finish archive (#9).
 
     Contents: ``passport.json`` (full state — all prompt layers per step) +
-    ``approved/`` (the current ``refs/`` golden frames) + ``rejected/`` (archived
-    attempts). Returned as a temp file the caller streams then the OS reaps.
+    ``approved/`` (the golden set: approved passport frames + base/series
+    emotions + outfit scenes + dataset — via :func:`golden_image_files`, NOT a
+    raw ``refs/`` glob, so the STYLE reference and unapproved/superseded frames
+    are excluded) + ``rejected/`` (archived attempts). Returned as a temp file
+    the caller streams then the OS reaps.
     """
     cdir = character_dir(state.character_id)
     tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)  # noqa: SIM115
@@ -592,12 +614,13 @@ def _build_archive(state: CharacterState) -> Path:
             "passport.json",
             json.dumps(state_to_dict(state), ensure_ascii=False, indent=2),
         )
-        for src, label in ((REFS_DIR, "approved"), (REJECTED_DIR, "rejected")):
-            folder = cdir / src
-            if folder.is_dir():
-                for item in sorted(folder.glob("*")):
-                    if item.is_file():
-                        zf.write(item, f"{label}/{item.name}")
+        for src, arcname in golden_image_files(state):
+            zf.write(src, arcname)
+        rejected = cdir / REJECTED_DIR
+        if rejected.is_dir():
+            for item in sorted(rejected.glob("*")):
+                if item.is_file():
+                    zf.write(item, f"rejected/{item.name}")
     return Path(tmp.name)
 
 
@@ -623,6 +646,20 @@ def _local_image(path: Path) -> Path:
         except OSError:
             return path
     return local
+
+
+def _warm_image_path(image_path: str | None) -> None:
+    """Pre-copy a freshly generated frame into the local image cache.
+
+    The bucket (Xet FUSE) is slow on first read, so without this the browser's
+    image request right after a successful generate can stall for many seconds
+    (the frame says "готово" but no picture appears). Warming server-side moves
+    that one slow read into the generate call (already slow) so the immediately
+    following ``/image`` GET is a fast local cache hit. Never raises —
+    :func:`_local_image` already degrades to the bucket path on any error.
+    """
+    if image_path:
+        _local_image(Path(image_path))
 
 
 def _serve_image(path: Path, width: int | None) -> Response:
@@ -810,6 +847,18 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         if draft is None:
             raise HTTPException(status_code=404, detail="character draft not found")
         state = character_from_extracted(draft, style_prompt=sess.style_prompt)
+        # Guard against id collision: two distinct names can slug to the same id
+        # (e.g. a second "Иван" -> "ivan", or two same-named drafts in one
+        # extraction). Without this, save_state would silently overwrite the
+        # earlier character — including its already-paid generations. Suffix only
+        # on collision (geron-2, geron-3, …) so the clean path stays deterministic.
+        existing = set(list_character_ids())
+        if state.character_id in existing:
+            base_id = state.character_id
+            n = 2
+            while f"{base_id}-{n}" in existing:
+                n += 1
+            state.character_id = f"{base_id}-{n}"
         # Stamp the persistent project STYLE (prompt + ref image) onto the new
         # character so its generations carry the frozen project style (§1).
         _apply_project_style(state)
@@ -848,7 +897,10 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             ],
         )
         set_props_enabled(state, bool(body.props.get("enabled")))
-        sync_props(state, [[p.get("name", "")] for p in (body.props.get("list") or [])])
+        sync_props(
+            state,
+            [[p.get("name", ""), p.get("shots", 1)] for p in (body.props.get("list") or [])],
+        )
         save_state(state)
         return {"character": _character_payload(state)}
 
@@ -999,10 +1051,15 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         if body.step_key not in PASSPORT_STEPS:
             raise HTTPException(status_code=400, detail="not a passport step")
         apply_layer_edit(state, body.step_key, face=body.face, body=body.body, outfit=body.outfit)
+        if body.composition is not None:
+            scene = scene_for_step(body.step_key)
+            if scene is not None:
+                set_scene_override(state, scene, body.composition)
         meter = CostLedger()
         result = generate_passport_frame(
             state, body.step_key, regenerate=body.regenerate, meter=meter
         )
+        _warm_image_path(result.image_path)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         state.current_step = body.step_key
@@ -1061,6 +1118,24 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         save_state(state)
         return {"emotions": _emotions_payload(state)}
 
+    @app.post("/api/character/{character_id}/emotions/base/enable")
+    def emotions_base_enable(
+        character_id: str, body: EnableRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Toggle the base emotion on/off WITHOUT generating (off -> not required).
+
+        Preserves the stored value so toggling off (and back on) never wipes the
+        user's chosen base expression. The paid ``/emotions/base`` route force-
+        enables; this free route is what the on/off slider must call.
+        """
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        set_base_emotion(state, body.enabled, state.emotions.base_emotion.value)
+        save_state(state)
+        return {"emotions": _emotions_payload(state)}
+
     @app.post("/api/character/{character_id}/emotions/generate")
     def emotions_generate(
         character_id: str, body: EmotionRequest, request: Request, response: Response
@@ -1074,6 +1149,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="emotion index out of range")
         meter = CostLedger()
         result = generate_emotion(state, body.index, meter=meter)
+        _warm_image_path(result.image_path)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         save_state(state)
@@ -1092,6 +1168,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             set_base_emotion(state, True, body.value)
         meter = CostLedger()
         result = generate_base_emotion(state, meter=meter)
+        _warm_image_path(result.image_path)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         save_state(state)
@@ -1158,6 +1235,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             set_outfit_prompt(state, outfit_step(state.outfits[body.index].id), body.prompt)
         meter = CostLedger()
         result = generate_outfit_scene(state, body.index, scene, meter=meter)
+        _warm_image_path(result.image_path)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         save_state(state)
@@ -1223,6 +1301,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             set_outfit_detail_prompt(state, outfit_detail_step(outfit.id, body.n), body.prompt)
         meter = CostLedger()
         result = generate_outfit_detail(state, body.index, body.n, meter=meter)
+        _warm_image_path(result.image_path)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         save_state(state)
@@ -1311,6 +1390,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             set_prop_shot_prompt(state, prop_shot_step(prop.id, body.n), body.prompt)
         meter = CostLedger()
         result = generate_prop_shot(state, body.index, body.n, meter=meter)
+        _warm_image_path(result.image_path)
         state.cost.merge(meter)
         sess.cost.merge(meter)
         save_state(state)
