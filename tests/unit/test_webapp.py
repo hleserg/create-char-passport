@@ -7,6 +7,7 @@ without a network or an API key.
 
 from __future__ import annotations
 
+import io
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -559,9 +560,18 @@ def test_finish_and_archive_404(client: TestClient) -> None:
 # --------------------------------------------------------------------------- #
 # project STYLE: refs upload + auto-draft + edit + lock + reset
 # --------------------------------------------------------------------------- #
+def _png_bytes() -> bytes:
+    """A small but real PNG (so the server-side thumbnail path can decode it)."""
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 30), (120, 90, 60)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _img_files(n: int) -> list[tuple[str, tuple[str, bytes, str]]]:
-    """Multipart ``files=`` payload of ``n`` dummy PNG uploads."""
-    return [("files", (f"r{i}.png", b"img-bytes", "image/png")) for i in range(n)]
+    """Multipart ``files=`` payload of ``n`` real PNG uploads."""
+    return [("files", (f"r{i}.png", _png_bytes(), "image/png")) for i in range(n)]
 
 
 def test_style_empty(client: TestClient, bucket: Path) -> None:
@@ -621,6 +631,16 @@ def test_style_refs_empty_upload_ok(client: TestClient, bucket: Path) -> None:
 def test_style_ref_bad_and_missing(client: TestClient, bucket: Path) -> None:
     assert client.get("/api/style/ref/bad-key").status_code == 400
     assert client.get("/api/style/ref/ref_9").status_code == 404
+
+
+def test_style_ref_thumbnail(client: TestClient, bucket: Path) -> None:
+    client.post("/api/style/refs", files=_img_files(1))
+    full = client.get("/api/style/ref/ref_1")
+    thumb = client.get("/api/style/ref/ref_1", params={"w": 16})
+    assert full.status_code == 200
+    assert thumb.status_code == 200
+    assert thumb.headers["content-type"] == "image/jpeg"  # downscaled, not the raw PNG
+    assert "max-age" in thumb.headers.get("cache-control", "")
 
 
 def test_create_character_stamps_project_style(

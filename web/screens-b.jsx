@@ -252,7 +252,7 @@ function ScreenPassport({ ctx }) {
     window.scrollTo({ top: 0 });
   }
 
-  const imgSrc = ctx.activeCharId ? window.api.imageUrl(ctx.activeCharId, serverKey, imgV) : null;
+  const imgSrc = ctx.activeCharId ? window.api.imageUrl(ctx.activeCharId, serverKey, imgV, 768) : null;
   const imgStyle = { maxWidth: "100%", maxHeight: ctx.variant === "C" ? 340 : 210, borderRadius: 6, objectFit: "contain" };
 
   const previewBlock = (
@@ -380,7 +380,7 @@ function EmotionCell({ item, id, onUpdate }) {
     }
     setSt("empty");
   }
-  const imgSrc = id && st === "ready" ? window.api.imageUrl(id, item.step_key, v) : null;
+  const imgSrc = id && st === "ready" ? window.api.imageUrl(id, item.step_key, v, 320) : null;
   return (
     <div className="pv-col">
       <div className="pv-title">{item.value}</div>
@@ -437,7 +437,7 @@ function ScreenEmotions({ ctx }) {
   const cells = emo
     ? emo.items
     : EMO_ROW.map((e, i) => ({ index: i, value: e.v, step_key: e.v, has_image: false }));
-  const baseImg = ctx.activeCharId && baseSt === "ready" ? window.api.imageUrl(ctx.activeCharId, "base_emotion", baseV) : null;
+  const baseImg = ctx.activeCharId && baseSt === "ready" ? window.api.imageUrl(ctx.activeCharId, "base_emotion", baseV, 320) : null;
 
   return (
     <div>
