@@ -42,5 +42,27 @@
         body: JSON.stringify(anketa),
       });
     },
+    /* passport phase -> ({passport}) */
+    getPassport(id) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/passport");
+    },
+    /* edit layers + (re)generate one frame -> ({ok, error, passport}) */
+    passportGenerate(id, payload) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/passport/generate", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+    /* approve a frame (freeze) -> ({passport}) */
+    passportApprove(id, stepKey) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/passport/approve", {
+        method: "POST",
+        body: JSON.stringify({ step_key: stepKey }),
+      });
+    },
+    /* URL of a generated frame image (v busts the cache after a regenerate) */
+    imageUrl(id, stepKey, v) {
+      return "/api/character/" + encodeURIComponent(id) + "/image/" + encodeURIComponent(stepKey) + "?v=" + (v || 0);
+    },
   };
 })();

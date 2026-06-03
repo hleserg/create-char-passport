@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from create_char_passport import webapp
 from create_char_passport.config import get_settings
+from create_char_passport.gen import GenerationResult
 from create_char_passport.state import CharacterState, CostLedger, StepRecord, blank_state
 from create_char_passport.storage import save_state
 from create_char_passport.wizard import ExtractedCharacter
@@ -222,3 +223,95 @@ def test_save_anketa_round_trip(client: TestClient, monkeypatch: pytest.MonkeyPa
 
 def test_save_anketa_not_found_404(client: TestClient) -> None:
     assert client.put("/api/character/ghost/anketa", json={"card": {}}).status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# passport: serialize / generate / approve / image
+# --------------------------------------------------------------------------- #
+def _fake_gen_ok(layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_bytes(b"img-bytes")
+    return GenerationResult(image_path=str(output_path), ok=True)
+
+
+def _fake_gen_fail(layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
+    return GenerationResult(image_path=None, ok=False, error="boom")
+
+
+def _make_character(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Create the seeded 'Герон' and return its id."""
+    _seed_extracted(client, monkeypatch)
+    return client.post("/api/character", json={"name": "Герон"}).json()["character"]["id"]
+
+
+def test_passport_serialise(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    cid = _make_character(client, monkeypatch)
+    pp = client.get(f"/api/character/{cid}/passport").json()["passport"]
+    assert pp["current_step"] == "passport_face"
+    assert [f["key"] for f in pp["frames"]] == list(webapp.PASSPORT_STEPS)
+    assert pp["all_approved"] is False
+    assert pp["frames"][0]["editable"] == ["face", "outfit"]
+    assert pp["frames"][0]["show_body"] is False
+    assert pp["frames"][1]["show_body"] is True
+
+
+def test_passport_generate_then_approve(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    monkeypatch.setattr("create_char_passport.wizard.passport.generate_image", _fake_gen_ok)
+    res = client.post(
+        f"/api/character/{cid}/passport/generate",
+        json={"step_key": "passport_face", "face": "broad nose", "outfit": "leather tunic"},
+    ).json()
+    assert res["ok"] is True
+    assert res["passport"]["frames"][0]["has_image"] is True
+    assert res["passport"]["frames"][0]["approved"] is False
+    # the generated image is now served
+    assert client.get(f"/api/character/{cid}/image/passport_face").status_code == 200
+    # approve -> frozen
+    pp = client.post(
+        f"/api/character/{cid}/passport/approve", json={"step_key": "passport_face"}
+    ).json()["passport"]
+    assert pp["frames"][0]["approved"] is True
+
+
+def test_passport_generate_failure_reports_error(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    monkeypatch.setattr("create_char_passport.wizard.passport.generate_image", _fake_gen_fail)
+    res = client.post(
+        f"/api/character/{cid}/passport/generate", json={"step_key": "passport_face"}
+    ).json()
+    assert res["ok"] is False
+    assert res["error"] == "boom"
+    assert res["passport"]["frames"][0]["has_image"] is False
+
+
+def test_passport_generate_rejects_non_passport_step(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    res = client.post(f"/api/character/{cid}/passport/generate", json={"step_key": "emotion_x"})
+    assert res.status_code == 400
+
+
+def test_passport_approve_without_generation_400(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    res = client.post(f"/api/character/{cid}/passport/approve", json={"step_key": "passport_face"})
+    assert res.status_code == 400
+
+
+def test_passport_not_found_404(client: TestClient) -> None:
+    assert client.get("/api/character/ghost/passport").status_code == 404
+
+
+def test_frame_image_missing_and_bad_key(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    assert client.get(f"/api/character/{cid}/image/passport_face").status_code == 404
+    assert client.get(f"/api/character/{cid}/image/bad-key").status_code == 400

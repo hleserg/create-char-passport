@@ -36,12 +36,24 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from create_char_passport.screens.router import ScreenId, WizardSession, resume_screen
-from create_char_passport.state import CharacterState, CostLedger, normalize_character_table
-from create_char_passport.storage import list_character_ids, load_state, save_state
+from create_char_passport.state import (
+    PASSPORT_STEPS,
+    CharacterState,
+    CostLedger,
+    normalize_character_table,
+)
+from create_char_passport.storage import (
+    REFS_DIR,
+    character_asset,
+    list_character_ids,
+    load_state,
+    save_state,
+)
 from create_char_passport.wizard import (
     apply_table,
     character_from_extracted,
@@ -53,6 +65,18 @@ from create_char_passport.wizard import (
     sync_props,
 )
 from create_char_passport.wizard.extraction import extract_characters
+from create_char_passport.wizard.passport import (
+    all_passport_approved,
+    apply_layer_edit,
+    approve_passport_frame,
+    cascade_warning,
+    current_passport_step,
+    editable_layers,
+    frame_criterion,
+    frame_title,
+    generate_passport_frame,
+    passport_index,
+)
 
 # Repo-relative location of the SPA (``<repo>/web``); P3's Docker image overrides
 # it via :func:`create_app`'s ``web_dir`` so the package and the static bundle can
@@ -106,6 +130,22 @@ class AnketaRequest(BaseModel):
     emotions: dict[str, Any] = Field(default_factory=dict)
     outfits: dict[str, Any] = Field(default_factory=dict)
     props: dict[str, Any] = Field(default_factory=dict)
+
+
+class PassportGenRequest(BaseModel):
+    """Body of ``POST /api/character/{id}/passport/generate``."""
+
+    step_key: str
+    face: str | None = None
+    body: str | None = None
+    outfit: str | None = None
+    regenerate: bool = False
+
+
+class StepRequest(BaseModel):
+    """Body of step actions that only need a ``step_key`` (e.g. approve)."""
+
+    step_key: str
 
 
 def _cost_payload(ledger: CostLedger) -> dict[str, Any]:
@@ -209,6 +249,49 @@ def _character_payload(state: CharacterState) -> dict[str, Any]:
             ],
         },
         "phase": _SCREEN_TO_PHASE.get(resume_screen(state), "data"),
+        "cost": _cost_payload(state.cost),
+    }
+
+
+def _frame_payload(state: CharacterState, step_key: str) -> dict[str, Any]:
+    """Serialise one passport frame for the passport screen.
+
+    FACE/BODY come from the canonical editable layers; OUTFIT is the base outfit
+    (entered/tuned on frames 1-2, read-only after). Freeze + visibility mirror
+    the passport rules: FACE editable on frame 1, BODY on frame 2, both frozen
+    after; the BODY field only appears from frame 2 on.
+    """
+    index = passport_index(step_key)
+    record = state.steps.get(step_key)
+    editable = editable_layers(step_key)
+    return {
+        "key": step_key,
+        "index": index,
+        "title": frame_title(step_key),
+        "criterion": frame_criterion(step_key),
+        "editable": sorted(editable),
+        "face": state.prompt_layers.face,
+        "body": state.prompt_layers.body,
+        "outfit": state.base_outfit.prompt,
+        "show_body": index >= 1,
+        "face_frozen": index >= 1,
+        "body_frozen": index >= 2,
+        "outfit_frozen": index >= 2 or state.base_outfit.frozen,
+        "has_image": bool(record and record.last_path),
+        "approved": bool(record and record.approved_path),
+        "stale": bool(record and record.stale),
+        "need_regen": bool(record and record.need_regen),
+        "warning": cascade_warning(state, step_key),
+    }
+
+
+def _passport_payload(state: CharacterState) -> dict[str, Any]:
+    """Serialise the whole passport phase for the SPA."""
+    return {
+        "current_step": current_passport_step(state),
+        "frames": [_frame_payload(state, key) for key in PASSPORT_STEPS],
+        "all_approved": all_passport_approved(state),
+        "style": state.prompt_layers.style,
         "cost": _cost_payload(state.cost),
     }
 
@@ -327,6 +410,67 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         sync_props(state, [[p.get("name", "")] for p in (body.props.get("list") or [])])
         save_state(state)
         return {"character": _character_payload(state)}
+
+    @app.get("/api/character/{character_id}/passport")
+    def passport(character_id: str, request: Request, response: Response) -> dict[str, Any]:
+        """Serialise the passport phase (5 frames, freeze state, images)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        return {"passport": _passport_payload(state)}
+
+    @app.post("/api/character/{character_id}/passport/generate")
+    def passport_generate(
+        character_id: str, body: PassportGenRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Edit the frame's layers, then (re)generate it. Bills the character + session."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        if body.step_key not in PASSPORT_STEPS:
+            raise HTTPException(status_code=400, detail="not a passport step")
+        apply_layer_edit(state, body.step_key, face=body.face, body=body.body, outfit=body.outfit)
+        meter = CostLedger()
+        result = generate_passport_frame(
+            state, body.step_key, regenerate=body.regenerate, meter=meter
+        )
+        state.cost.merge(meter)
+        sess.cost.merge(meter)
+        state.current_step = body.step_key
+        save_state(state)
+        return {
+            "ok": result.ok,
+            "error": result.error,
+            "passport": _passport_payload(state),
+        }
+
+    @app.post("/api/character/{character_id}/passport/approve")
+    def passport_approve(
+        character_id: str, body: StepRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Approve the frame's current shot (applies the freeze rules)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        try:
+            approve_passport_frame(state, body.step_key)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        save_state(state)
+        return {"passport": _passport_payload(state)}
+
+    @app.get("/api/character/{character_id}/image/{step_key}")
+    def frame_image(character_id: str, step_key: str) -> FileResponse:
+        """Serve a character's generated frame ``refs/<step_key>.png``."""
+        if not step_key.replace("_", "").isalnum():
+            raise HTTPException(status_code=400, detail="bad step key")
+        path = character_asset(character_id, f"{REFS_DIR}/{step_key}.png")
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="no image")
+        return FileResponse(str(path))
 
     web_root = web_dir or _REPO_WEB
     if web_root.is_dir():
