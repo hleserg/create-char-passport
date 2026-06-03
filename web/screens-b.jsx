@@ -314,11 +314,12 @@ function ScreenPassport({ ctx }) {
         const d = await window.api.passportApprove(ctx.activeCharId, serverKey);
         if (d.passport) {
           setPp(d.passport);
-          // need_regen gate: if a prior frame is now flagged for regeneration
-          // (e.g. an accepted «Правка с ИИ»), pull the user back to it instead of
-          // blindly advancing past a step that's waiting.
-          const i = FRAMES.findIndex((f) => "passport_" + f.key === d.passport.current_step);
-          if (!isLast && i >= 0 && i !== step + 1) { ctx.setPStep(i); window.scrollTo({ top: 0 }); return; }
+          // need_regen gate: only pull BACK to an EARLIER frame that an accepted
+          // «Правка с ИИ» flagged for regeneration. The just-approved frame had its
+          // flag cleared, so a pending frame at index <= step means a prior step is
+          // waiting; otherwise advance normally.
+          const pending = (d.passport.frames || []).findIndex((f) => f.need_regen);
+          if (!isLast && pending >= 0 && pending <= step) { ctx.setPStep(pending); window.scrollTo({ top: 0 }); return; }
         }
       } catch (e) { /* navigate anyway */ }
     }
