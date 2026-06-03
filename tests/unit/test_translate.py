@@ -19,6 +19,20 @@ def test_build_prompt_embeds_text_and_layer() -> None:
     assert "'Одежда' layer" in p  # {layer} substituted
 
 
+def test_build_prompt_edit_mode_embeds_current_and_change_instruction() -> None:
+    p = build_translate_prompt("сделай нос покрупнее", "face", current="broad nose, full lips")
+    assert "сделай нос покрупнее" in p  # the change request
+    assert "broad nose, full lips" in p  # the existing prompt to modify
+    assert "MODIFYING" in p and "do NOT rewrite from scratch" in p
+    assert "{current}" not in p  # placeholder fully substituted
+
+
+def test_build_prompt_blank_current_stays_fresh_translate() -> None:
+    # A whitespace-only current must NOT switch to edit mode.
+    p = build_translate_prompt("широкий нос", "face", current="   ")
+    assert "MODIFYING" not in p
+
+
 def test_parse_valid_json_with_suggestions() -> None:
     raw = '{"text": "dark leather tunic", "suggestions": {"body": "stocky build", "x": "ignored"}}'
     t = parse_translation(raw)
@@ -47,3 +61,15 @@ def test_translate_calls_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     t = translate_layer("широкий нос", "Лицо")
     assert t.text == "broad nose"
     assert t.suggestions == {"outfit": "tunic"}
+
+
+def test_translate_edit_mode_forwards_current(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, str] = {}
+    monkeypatch.setattr(
+        tr, "call_llm", lambda prompt, **k: seen.update(prompt=prompt) or '{"text": "bigger nose"}'
+    )
+    t = translate_layer("сделай нос покрупнее", "face", current="broad nose")
+    assert t.text == "bigger nose"
+    # The existing prompt + edit instruction reach the LLM (modify, not rewrite).
+    assert "broad nose" in seen["prompt"]
+    assert "MODIFYING" in seen["prompt"]

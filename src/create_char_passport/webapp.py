@@ -170,10 +170,15 @@ class CreateRequest(BaseModel):
 
 
 class TranslateRequest(BaseModel):
-    """Body of ``POST /api/translate`` — Russian text + the target layer label."""
+    """Body of ``POST /api/translate`` — Russian text + the target layer label.
+
+    ``current`` is the prompt already in the field: when non-empty, ``text`` is
+    applied as a change request that modifies it in place (edit mode).
+    """
 
     text: str = ""
     layer: str = ""
+    current: str = ""
 
 
 class CheckRequest(BaseModel):
@@ -782,7 +787,9 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         """RU -> EN layer prompt (+ other-layer spillover hints). Bills the session."""
         sess = _get_session(request, response)
         meter = CostLedger()
-        result = translate_layer(body.text or "", body.layer or "", meter=meter)
+        result = translate_layer(
+            body.text or "", body.layer or "", current=body.current or "", meter=meter
+        )
         sess.cost.merge(meter)
         return {
             "text": result.text,
