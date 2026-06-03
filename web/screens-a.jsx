@@ -43,22 +43,18 @@ function ScreenStart({ ctx }) {
     return () => { alive = false; };
   }, []);
 
-  // Attach one style reference (data-URL). The backend drafts the prompt by LLM
-  // once the 5th lands; we reflect the returned style (incl. the drafted prompt).
-  function onPickRef(e) {
+  // Attach one style reference FILE (multipart upload). The backend drafts the
+  // prompt by LLM once the 5th lands; we reflect the returned style.
+  async function onPickRef(e) {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      setStyleBusy(true);
-      try {
-        const d = await window.api.styleRefs([reader.result]);
-        if (d.style) { setStyle(d.style); setStylePrompt(d.style.prompt || ""); }
-      } catch (err) { /* offline preview: ignore */ }
-      setStyleBusy(false);
-    };
-    reader.readAsDataURL(file);
+    setStyleBusy(true);
+    try {
+      const d = await window.api.styleRefs(file);
+      if (d.style) { setStyle(d.style); setStylePrompt(d.style.prompt || ""); }
+    } catch (err) { /* offline preview: ignore */ }
+    setStyleBusy(false);
   }
   async function saveStylePrompt() {
     try { const d = await window.api.styleSave(stylePrompt); if (d.style) setStyle(d.style); } catch (e) { /* ignore */ }

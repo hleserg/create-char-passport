@@ -31,8 +31,6 @@ Design rules carried over from the Gradio layer:
 
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import os
 import secrets
@@ -41,7 +39,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -255,12 +253,6 @@ class PropShotRequest(BaseModel):
     n: int
     what: str | None = None
     prompt: str | None = None
-
-
-class StyleRefsRequest(BaseModel):
-    """Body of ``POST /api/style/refs`` — base64 (or data-URL) reference images."""
-
-    images: list[str] = Field(default_factory=list)
 
 
 class StylePromptRequest(BaseModel):
@@ -607,12 +599,6 @@ def _any_generation_exists() -> bool:
         if state is not None and _has_generation(state):
             return True
     return False
-
-
-def _decode_image(data: str) -> bytes:
-    """Decode a raw-base64 or ``data:`` URL image into bytes."""
-    payload = data.split(",", 1)[1] if data.startswith("data:") else data
-    return base64.b64decode(payload, validate=False)
 
 
 def _style_payload() -> dict[str, Any]:
@@ -1071,18 +1057,26 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         return {"style": _style_payload()}
 
     @app.post("/api/style/refs")
-    def style_refs(body: StyleRefsRequest, request: Request, response: Response) -> dict[str, Any]:
-        """Append reference images; when the 5th lands, LLM-draft the STYLE prompt."""
+    def style_refs(
+        request: Request,
+        response: Response,
+        files: list[UploadFile] = File(default=[]),  # noqa: B008
+    ) -> dict[str, Any]:
+        """Append reference images (multipart); the 5th triggers the LLM draft.
+
+        Multipart upload — NOT base64-in-JSON — because the Space proxy drops
+        large JSON request bodies (see memory hf-space-bucket-and-body-limit).
+        An empty upload still drafts if 5 refs are already present in the bucket.
+        """
         sess = _get_session(request, response)
         folder = _style_dir()
         count = len(_style_refs())
-        for data in body.images:
+        for upload in files:
             if count >= _MAX_STYLE_REFS:
                 break
-            try:
-                raw = _decode_image(data)
-            except (binascii.Error, ValueError) as exc:
-                raise HTTPException(status_code=400, detail="bad image data") from exc
+            raw = upload.file.read()
+            if not raw:
+                continue
             count += 1
             (folder / f"ref_{count}.png").write_bytes(raw)
         meta = _load_style_meta()

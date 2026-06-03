@@ -27,9 +27,17 @@
     getStyle() {
       return jsonFetch("/api/style");
     },
-    /* append reference images (base64 / data-URL); 5th triggers the LLM draft */
-    styleRefs(images) {
-      return jsonFetch("/api/style/refs", { method: "POST", body: JSON.stringify({ images: images }) });
+    /* append reference image FILES (multipart — the Space proxy drops big JSON
+       bodies); the 5th ref triggers the LLM draft. Accepts a File or File[]. */
+    styleRefs(files) {
+      const list = Array.isArray(files) ? files : [files];
+      const fd = new FormData();
+      list.forEach((f) => fd.append("files", f));
+      return fetch("/api/style/refs", { method: "POST", credentials: "same-origin", body: fd })
+        .then((r) => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        });
     },
     /* edit the STYLE prompt in place (only before the first generation) */
     styleSave(prompt) {

@@ -7,7 +7,6 @@ without a network or an API key.
 
 from __future__ import annotations
 
-import base64
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -560,8 +559,9 @@ def test_finish_and_archive_404(client: TestClient) -> None:
 # --------------------------------------------------------------------------- #
 # project STYLE: refs upload + auto-draft + edit + lock + reset
 # --------------------------------------------------------------------------- #
-def _b64(data: bytes = b"img-bytes") -> str:
-    return base64.b64encode(data).decode("ascii")
+def _img_files(n: int) -> list[tuple[str, tuple[str, bytes, str]]]:
+    """Multipart ``files=`` payload of ``n`` dummy PNG uploads."""
+    return [("files", (f"r{i}.png", b"img-bytes", "image/png")) for i in range(n)]
 
 
 def test_style_empty(client: TestClient, bucket: Path) -> None:
@@ -580,11 +580,11 @@ def test_style_upload_drafts_on_fifth(
     monkeypatch.setattr(
         webapp, "draft_style_prompt", lambda paths, meter=None: "inked comic, muted watercolour"
     )
-    four = client.post("/api/style/refs", json={"images": [_b64()] * 4}).json()
+    four = client.post("/api/style/refs", files=_img_files(4)).json()
     assert four["drafted"] is False
     assert four["style"]["ref_count"] == 4
     assert four["style"]["prompt"] == ""
-    fifth = client.post("/api/style/refs", json={"images": [_b64()]}).json()
+    fifth = client.post("/api/style/refs", files=_img_files(1)).json()
     assert fifth["drafted"] is True
     assert fifth["style"]["prompt"] == "inked comic, muted watercolour"
     assert fifth["style"]["approved"] is True
@@ -605,15 +605,17 @@ def test_style_put_then_locked(client: TestClient, bucket: Path) -> None:
 
 def test_style_reset(client: TestClient, bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(webapp, "draft_style_prompt", lambda paths, meter=None: "drafted style")
-    client.post("/api/style/refs", json={"images": [_b64()] * 5})
+    client.post("/api/style/refs", files=_img_files(5))
     assert client.get("/api/style").json()["style"]["prompt"] == "drafted style"
     reset = client.post("/api/style/reset").json()
     assert reset["style"]["prompt"] == ""
     assert reset["style"]["ref_count"] == 0
 
 
-def test_style_refs_bad_image_400(client: TestClient, bucket: Path) -> None:
-    assert client.post("/api/style/refs", json={"images": ["!!not base64!!"]}).status_code == 400
+def test_style_refs_empty_upload_ok(client: TestClient, bucket: Path) -> None:
+    # An empty multipart upload is a no-op (used to trigger a draft when refs
+    # already sit in the bucket) — it must not error.
+    assert client.post("/api/style/refs", files=_img_files(0)).status_code == 200
 
 
 def test_style_ref_bad_and_missing(client: TestClient, bucket: Path) -> None:
