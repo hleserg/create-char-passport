@@ -60,6 +60,28 @@
         body: JSON.stringify({ step_key: stepKey }),
       });
     },
+    /* emotions phase -> ({emotions}) */
+    getEmotions(id) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/emotions");
+    },
+    emotionGenerate(id, index) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/emotions/generate", {
+        method: "POST",
+        body: JSON.stringify({ index: index }),
+      });
+    },
+    emotionBase(id, value) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/emotions/base", {
+        method: "POST",
+        body: JSON.stringify({ value: value }),
+      });
+    },
+    emotionDelete(id, index) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/emotions/delete", {
+        method: "POST",
+        body: JSON.stringify({ index: index }),
+      });
+    },
     /* URL of a generated frame image (v busts the cache after a regenerate) */
     imageUrl(id, stepKey, v) {
       return "/api/character/" + encodeURIComponent(id) + "/image/" + encodeURIComponent(stepKey) + "?v=" + (v || 0);
