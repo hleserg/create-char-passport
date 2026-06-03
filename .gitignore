@@ -41,3 +41,7 @@ htmlcov/
 
 # Claude Code personal hooks/overrides (not shared)
 .claude/settings.local.json
+
+# Local artifacts / handoff (not source)
+/data/
+character-passport-handoff.zip
