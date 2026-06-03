@@ -31,6 +31,8 @@ Design rules carried over from the Gradio layer:
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import secrets
@@ -62,6 +64,7 @@ from create_char_passport.storage import (
     REFS_DIR,
     REJECTED_DIR,
     archive_to_rejected,
+    bucket_root,
     character_asset,
     character_dir,
     list_character_ids,
@@ -69,12 +72,15 @@ from create_char_passport.storage import (
     save_state,
 )
 from create_char_passport.wizard import (
+    apply_style,
     apply_table,
     character_from_extracted,
+    draft_style_prompt,
     set_base_emotion,
     set_emotions_enabled,
     set_outfits_enabled,
     set_props_enabled,
+    set_style_ref,
     sync_outfits,
     sync_props,
 )
@@ -249,6 +255,18 @@ class PropShotRequest(BaseModel):
     n: int
     what: str | None = None
     prompt: str | None = None
+
+
+class StyleRefsRequest(BaseModel):
+    """Body of ``POST /api/style/refs`` — base64 (or data-URL) reference images."""
+
+    images: list[str] = Field(default_factory=list)
+
+
+class StylePromptRequest(BaseModel):
+    """Body of ``PUT /api/style`` — the edited STYLE-layer prompt."""
+
+    prompt: str = ""
 
 
 def _cost_payload(ledger: CostLedger) -> dict[str, Any]:
@@ -545,6 +563,84 @@ def _load_for_session(sess: WizardSession, character_id: str) -> CharacterState 
     return state
 
 
+# --------------------------------------------------------------------------- #
+# Project-level STYLE store (shared across characters; persisted in the bucket).
+# --------------------------------------------------------------------------- #
+_STYLE_DIRNAME = "_style"
+_MAX_STYLE_REFS = 5
+
+
+def _style_dir() -> Path:
+    """Bucket-rooted folder holding the project's style refs + ``style.json``."""
+    folder = bucket_root() / _STYLE_DIRNAME
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def _load_style_meta() -> dict[str, Any]:
+    """Load ``{prompt, approved}`` for the project style (defaults when absent)."""
+    path = _style_dir() / "style.json"
+    if path.is_file():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            return {"prompt": "", "approved": False}
+    return {"prompt": "", "approved": False}
+
+
+def _save_style_meta(meta: dict[str, Any]) -> None:
+    """Persist the project style meta."""
+    (_style_dir() / "style.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _style_refs() -> list[Path]:
+    """The stored style reference images, in order."""
+    return sorted(_style_dir().glob("ref_*.png"))
+
+
+def _any_generation_exists() -> bool:
+    """True once any character has a generated frame — STYLE is then locked (§1)."""
+    for character_id in list_character_ids():
+        state = load_state(character_id)
+        if state is not None and _has_generation(state):
+            return True
+    return False
+
+
+def _decode_image(data: str) -> bytes:
+    """Decode a raw-base64 or ``data:`` URL image into bytes."""
+    payload = data.split(",", 1)[1] if data.startswith("data:") else data
+    return base64.b64decode(payload, validate=False)
+
+
+def _style_payload() -> dict[str, Any]:
+    """Serialise the project STYLE for the start screen."""
+    meta = _load_style_meta()
+    refs = _style_refs()
+    return {
+        "prompt": meta.get("prompt", ""),
+        "approved": bool(meta.get("approved", False)),
+        "ref_keys": [p.stem for p in refs],
+        "ref_count": len(refs),
+        # Once any character was generated, STYLE is frozen project-wide: the
+        # prompt can only change via the explicit "Изменить стиль" reset (which
+        # warns that existing characters must be redrawn).
+        "locked": _any_generation_exists(),
+    }
+
+
+def _apply_project_style(state: CharacterState) -> None:
+    """Stamp the persistent project STYLE (prompt + first ref image) onto a character."""
+    prompt = _load_style_meta().get("prompt", "")
+    if prompt:
+        apply_style(state, prompt)
+    refs = _style_refs()
+    if refs:
+        set_style_ref(state, str(refs[0]))
+
+
 def _get_session(request: Request, response: Response) -> WizardSession:
     """Resolve the cookie-bound session, minting + setting the cookie if absent."""
     sid = request.cookies.get(_SESSION_COOKIE)
@@ -606,6 +702,9 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         if draft is None:
             raise HTTPException(status_code=404, detail="character draft not found")
         state = character_from_extracted(draft, style_prompt=sess.style_prompt)
+        # Stamp the persistent project STYLE (prompt + ref image) onto the new
+        # character so its generations carry the frozen project style (§1).
+        _apply_project_style(state)
         sess.character = state
         save_state(state)
         return {"character": _character_payload(state)}
@@ -964,6 +1063,71 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         zip_path = _build_archive(state)
         filename = f"{state.character_id}_passport.zip"
         return FileResponse(str(zip_path), media_type="application/zip", filename=filename)
+
+    @app.get("/api/style")
+    def get_style(request: Request, response: Response) -> dict[str, Any]:
+        """The project STYLE (prompt, refs, lock state)."""
+        _get_session(request, response)
+        return {"style": _style_payload()}
+
+    @app.post("/api/style/refs")
+    def style_refs(body: StyleRefsRequest, request: Request, response: Response) -> dict[str, Any]:
+        """Append reference images; when the 5th lands, LLM-draft the STYLE prompt."""
+        sess = _get_session(request, response)
+        folder = _style_dir()
+        count = len(_style_refs())
+        for data in body.images:
+            if count >= _MAX_STYLE_REFS:
+                break
+            try:
+                raw = _decode_image(data)
+            except (binascii.Error, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="bad image data") from exc
+            count += 1
+            (folder / f"ref_{count}.png").write_bytes(raw)
+        meta = _load_style_meta()
+        drafted = False
+        refs = _style_refs()
+        if len(refs) >= _MAX_STYLE_REFS and not meta.get("prompt"):
+            meter = CostLedger()
+            prompt = draft_style_prompt([str(p) for p in refs], meter=meter)
+            sess.cost.merge(meter)
+            if prompt:
+                meta = {"prompt": prompt, "approved": True}
+                _save_style_meta(meta)
+                drafted = True
+        return {"style": _style_payload(), "drafted": drafted}
+
+    @app.put("/api/style")
+    def put_style(body: StylePromptRequest, request: Request, response: Response) -> dict[str, Any]:
+        """Edit the STYLE prompt in place — allowed only before the first generation."""
+        _get_session(request, response)
+        if _any_generation_exists():
+            raise HTTPException(
+                status_code=409, detail="style is locked — use «Изменить стиль» to reset"
+            )
+        text = body.prompt.strip()
+        _save_style_meta({"prompt": text, "approved": bool(text)})
+        return {"style": _style_payload()}
+
+    @app.post("/api/style/reset")
+    def reset_style(request: Request, response: Response) -> dict[str, Any]:
+        """«Изменить стиль»: clear the project style + refs so the user re-uploads."""
+        _get_session(request, response)
+        for ref in _style_refs():
+            ref.unlink(missing_ok=True)
+        _save_style_meta({"prompt": "", "approved": False})
+        return {"style": _style_payload()}
+
+    @app.get("/api/style/ref/{key}")
+    def style_ref_image(key: str) -> FileResponse:
+        """Serve a stored style reference image (``ref_<n>``)."""
+        if not key.replace("_", "").isalnum():
+            raise HTTPException(status_code=400, detail="bad key")
+        path = _style_dir() / f"{key}.png"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="no image")
+        return FileResponse(str(path))
 
     web_root = web_dir or _web_dir_from_env() or _REPO_WEB
     if web_root.is_dir():

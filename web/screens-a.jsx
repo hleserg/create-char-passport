@@ -15,22 +15,59 @@ function bodyMarks(s) {
 /* =========================================================
    SCREEN 1 — START
    ========================================================= */
+const SAMPLE_STYLE = {
+  prompt: "graphic novel, bold ink linework, muted watercolour wash, dramatic chiaroscuro lighting, grainy paper texture",
+  approved: true, ref_keys: [], ref_count: 0, locked: false,
+};
+
 function ScreenStart({ ctx }) {
-  const [styleDone, setStyleDone] = useS1(true);
   const [text, setText] = useS1("");
   const [extracted, setExtracted] = useS1(false);
   const [found, setFound] = useS1([]);
   const [saved, setSaved] = useS1(SAMPLE_CHARS);
+  const [style, setStyle] = useS1(null);
+  const [stylePrompt, setStylePrompt] = useS1("");
+  const [styleBusy, setStyleBusy] = useS1(false);
+  const [confirmReset, setConfirmReset] = useS1(false);
 
-  // Bootstrap from the backend (session cookie + saved characters). Degrades
-  // silently to the sample cast when no backend is present (static preview).
+  // Bootstrap from the backend (session + saved characters + project style).
+  // Degrades silently to sample data when no backend is present (static preview).
   React.useEffect(() => {
     let alive = true;
     window.api.session()
       .then((d) => { if (alive && Array.isArray(d.saved_characters)) setSaved(d.saved_characters); })
       .catch(() => {});
+    window.api.getStyle()
+      .then((d) => { if (alive && d.style) { setStyle(d.style); setStylePrompt(d.style.prompt || ""); } })
+      .catch(() => { if (alive) { setStyle(SAMPLE_STYLE); setStylePrompt(SAMPLE_STYLE.prompt); } });
     return () => { alive = false; };
   }, []);
+
+  // Attach one style reference (data-URL). The backend drafts the prompt by LLM
+  // once the 5th lands; we reflect the returned style (incl. the drafted prompt).
+  function onPickRef(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      setStyleBusy(true);
+      try {
+        const d = await window.api.styleRefs([reader.result]);
+        if (d.style) { setStyle(d.style); setStylePrompt(d.style.prompt || ""); }
+      } catch (err) { /* offline preview: ignore */ }
+      setStyleBusy(false);
+    };
+    reader.readAsDataURL(file);
+  }
+  async function saveStylePrompt() {
+    try { const d = await window.api.styleSave(stylePrompt); if (d.style) setStyle(d.style); } catch (e) { /* ignore */ }
+  }
+  async function resetStyle() {
+    setConfirmReset(false);
+    try { const d = await window.api.styleReset(); if (d.style) { setStyle(d.style); setStylePrompt(""); } }
+    catch (e) { setStyle({ prompt: "", approved: false, ref_keys: [], ref_count: 0, locked: false }); setStylePrompt(""); }
+  }
 
   // Paste -> real paid extraction. Returning the Promise keeps the AI button
   // shimmering for the true round-trip; a missing backend falls back to demo names.
@@ -79,29 +116,71 @@ function ScreenStart({ ctx }) {
       </Help>
 
       {/* STYLE STEP */}
-      <Panel title="Стиль рисунка" icon="🎨" badge={styleDone ? <span className="badge lock">🔒 закреплён</span> : <span className="badge now">сначала это</span>}>
-        <p className="muted" style={{ marginTop: 0, fontSize: 13.5 }}>
-          Загрузите 5 примеров картинок в той манере, в которой хотите рисовать историю
-          (комикс, акварель, нуар…). Нейросеть посмотрит на них и опишет стиль словами — дальше
-          все картинки будут в этой манере.
-        </p>
-        <div className="pv-grid" style={{ gridTemplateColumns: "repeat(5,1fr)", marginBottom: 14 }}>
-          {[0, 1, 2, 3, 4].map((i) => (
-            <div className="pv ready" key={i} style={{ minHeight: 92 }}>
-              <Figure kind="item" size={34} />
-              <span className="pv-sub">пример {i + 1}</span>
-            </div>
-          ))}
-        </div>
-        <Field ru="Описание стиля" en="STYLE" hint={<DoDont yes="манеру рисунка, технику, свет, палитру" no="конкретного героя, его лицо, одежду или сцену" />}>
-          <PromptField value="graphic novel, bold ink linework, muted watercolour wash, dramatic chiaroscuro lighting, grainy paper texture" readOnly rows={2} />
-        </Field>
-        <div className="btnrow" style={{ marginTop: 12 }}>
-          <span className="stamp lock">🔒 стиль закреплён</span>
-          <span className="spacer" style={{ flex: 1 }}></span>
-          <button className="btn ghost sm" onClick={() => setStyleDone(false)}>Изменить стиль</button>
-        </div>
-      </Panel>
+      {(() => {
+        const st = style || SAMPLE_STYLE;
+        const hasPrompt = !!st.prompt;
+        const badge = !hasPrompt
+          ? <span className="badge now">сначала это</span>
+          : st.locked
+            ? <span className="badge lock">🔒 закреплён</span>
+            : <span className="badge now">черновик — можно править</span>;
+        return (
+          <Panel title="Стиль рисунка" icon="🎨" badge={badge}>
+            <p className="muted" style={{ marginTop: 0, fontSize: 13.5 }}>
+              Загрузите 5 примеров картинок в той манере, в которой хотите рисовать историю
+              (комикс, акварель, нуар…). Когда прикрепите <b>5-й</b> — нейросеть сама опишет стиль
+              словами, и дальше все картинки будут в этой манере.
+            </p>
+
+            {!hasPrompt && (
+              <>
+                <div className="pv-grid" style={{ gridTemplateColumns: "repeat(5,1fr)", marginBottom: 12 }}>
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    i < st.ref_count
+                      ? <div className="pv ready" key={i} style={{ minHeight: 92 }}>
+                          {st.ref_keys[i] ? <img src={window.api.styleRefUrl(st.ref_keys[i])} alt={"пример " + (i + 1)} style={{ maxWidth: "100%", maxHeight: 84, borderRadius: 6, objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} /> : <Figure kind="item" size={34} />}
+                          <span className="pv-sub">пример {i + 1}</span>
+                        </div>
+                      : <label className="pv" key={i} style={{ minHeight: 92, cursor: styleBusy ? "wait" : "pointer", borderStyle: "dashed" }}>
+                          <input type="file" accept="image/*" style={{ display: "none" }} disabled={styleBusy} onChange={onPickRef} />
+                          <Figure kind="item" size={26} />
+                          <span className="pv-sub" style={{ color: "var(--blue-deep)" }}>+ пример {i + 1}</span>
+                        </label>
+                  ))}
+                </div>
+                {styleBusy
+                  ? <p className="tip"><span className="ic">✦</span><span>{st.ref_count >= 4 ? "ИИ описывает стиль по референсам…" : "Загружаю…"}</span></p>
+                  : <p className="tip"><span className="ic">ℹ</span><span>Прикреплено <b>{st.ref_count}</b> из 5. На пятом ИИ автоматически опишет стиль.</span></p>}
+              </>
+            )}
+
+            {hasPrompt && (
+              <>
+                {st.ref_keys.length > 0 && (
+                  <div className="pv-grid" style={{ gridTemplateColumns: "repeat(5,1fr)", marginBottom: 12 }}>
+                    {st.ref_keys.map((key, i) => (
+                      <div className="pv ready" key={key} style={{ minHeight: 80 }}>
+                        <img src={window.api.styleRefUrl(key)} alt={"пример " + (i + 1)} style={{ maxWidth: "100%", maxHeight: 72, borderRadius: 6, objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <Field ru="Описание стиля" en="STYLE" hint={<DoDont yes="манеру рисунка, технику, свет, палитру" no="конкретного героя, его лицо, одежду или сцену" />}>
+                  <PromptField value={stylePrompt} onChange={setStylePrompt} readOnly={st.locked} rows={2} />
+                </Field>
+                <div className="btnrow" style={{ marginTop: 12 }}>
+                  {st.locked
+                    ? <span className="stamp lock">🔒 стиль закреплён</span>
+                    : <button className="btn sm" onClick={saveStylePrompt}>Сохранить описание</button>}
+                  {!st.locked && <span className="muted" style={{ fontSize: 12 }}>править можно, пока не сделан первый портрет</span>}
+                  <span className="spacer" style={{ flex: 1 }}></span>
+                  <button className="btn ghost sm" onClick={() => setConfirmReset(true)}>Изменить стиль</button>
+                </div>
+              </>
+            )}
+          </Panel>
+        );
+      })()}
 
       {/* STORY TEXT */}
       <Panel title="Текст вашей истории" icon="📖" badge={<span className="badge now">отсюда берём героев</span>}>
@@ -146,7 +225,7 @@ function ScreenStart({ ctx }) {
                 <td>
                   <div className="btnrow" style={{ justifyContent: "flex-end", gap: 8 }}>
                     {c.status === "готов" && (
-                      <button className="btn ghost sm" title="Скачать ZIP-архив героя (кадры + промты)" onClick={() => window.downloadHeroArchive && window.downloadHeroArchive(c.name)}>⬇ Скачать</button>
+                      <button className="btn ghost sm" title="Скачать ZIP-архив героя (кадры + промты)" onClick={() => { window.location.href = window.api.archiveUrl(c.id); }}>⬇ Скачать</button>
                     )}
                     <button className="btn ghost sm" onClick={() => { ctx.setActiveChar(c.name); ctx.setActiveCharId(c.id); ctx.go(c.step || "data"); }}>Открыть →</button>
                   </div>
@@ -156,6 +235,19 @@ function ScreenStart({ ctx }) {
           </tbody>
         </table>
       </Panel>
+
+      {confirmReset && (
+        <Dialog onClose={() => setConfirmReset(false)}>
+          <h3>⚠ Изменить стиль рисунка?</h3>
+          <p>Стиль — общий для всех персонажей. Если поменять его сейчас, все уже нарисованные
+            герои окажутся <b>не в том стиле</b> — их кадры придётся <b>перегенерировать заново</b>.</p>
+          <p className="muted" style={{ fontSize: 13 }}>Текущее описание и референсы сбросятся, и вы загрузите 5 новых примеров.</p>
+          <div className="btnrow end">
+            <button className="btn ghost" onClick={() => setConfirmReset(false)}>Отмена</button>
+            <button className="btn warn" onClick={resetStyle}>Да, изменить стиль</button>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }

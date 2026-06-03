@@ -23,6 +23,25 @@
     session() {
       return jsonFetch("/api/session");
     },
+    /* project STYLE: prompt + refs + lock state */
+    getStyle() {
+      return jsonFetch("/api/style");
+    },
+    /* append reference images (base64 / data-URL); 5th triggers the LLM draft */
+    styleRefs(images) {
+      return jsonFetch("/api/style/refs", { method: "POST", body: JSON.stringify({ images: images }) });
+    },
+    /* edit the STYLE prompt in place (only before the first generation) */
+    styleSave(prompt) {
+      return jsonFetch("/api/style", { method: "PUT", body: JSON.stringify({ prompt: prompt }) });
+    },
+    /* «Изменить стиль»: clear the project style + refs */
+    styleReset() {
+      return jsonFetch("/api/style/reset", { method: "POST" });
+    },
+    styleRefUrl(key, v) {
+      return "/api/style/ref/" + encodeURIComponent(key) + "?v=" + (v || 0);
+    },
     /* paste a story -> extracted character drafts ({characters, cost}) */
     extract(text) {
       return jsonFetch("/api/extract", { method: "POST", body: JSON.stringify({ text: text }) });

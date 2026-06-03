@@ -17,12 +17,18 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN uv pip install --system --no-cache .
 
-# The SPA bundle (served statically) + a writable bucket for character state.
+# The SPA bundle (served statically).
 COPY web ./web
-RUN useradd -m -u 1000 user && mkdir -p /app/data && chown -R user /app/data
+RUN useradd -m -u 1000 user
 
+# APP_BUCKET_PATH points at /data, where the HF Storage Bucket
+# (create-char-passport-storage) is mounted read-write at *runtime* by the
+# platform (the deploy script mounts it; see scripts/deploy_space.py). Note:
+# /data is NOT available during build, so nothing here writes to it — the app
+# creates the tree on first request. All character state + the project _style/
+# live in the bucket, so they persist across Space restarts and rebuilds.
 ENV CPH_WEB_DIR=/app/web \
-    APP_BUCKET_PATH=/app/data \
+    APP_BUCKET_PATH=/data \
     GRADIO_SSR_MODE=false
 
 USER user
