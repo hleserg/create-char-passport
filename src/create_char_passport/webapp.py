@@ -35,13 +35,23 @@ import secrets
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from create_char_passport.screens.router import ScreenId, WizardSession, resume_screen
-from create_char_passport.state import CharacterState, CostLedger
-from create_char_passport.storage import list_character_ids, load_state
+from create_char_passport.state import CharacterState, CostLedger, normalize_character_table
+from create_char_passport.storage import list_character_ids, load_state, save_state
+from create_char_passport.wizard import (
+    apply_table,
+    character_from_extracted,
+    set_base_emotion,
+    set_emotions_enabled,
+    set_outfits_enabled,
+    set_props_enabled,
+    sync_outfits,
+    sync_props,
+)
 from create_char_passport.wizard.extraction import extract_characters
 
 # Repo-relative location of the SPA (``<repo>/web``); P3's Docker image overrides
@@ -75,6 +85,27 @@ class ExtractRequest(BaseModel):
     """Body of ``POST /api/extract`` — the pasted story text."""
 
     text: str = ""
+
+
+class CreateRequest(BaseModel):
+    """Body of ``POST /api/character`` — the picked extracted character's name."""
+
+    name: str = ""
+
+
+class AnketaRequest(BaseModel):
+    """Body of ``PUT /api/character/{id}/anketa`` — the edited character-data form.
+
+    ``card`` carries the seven trait fields, ``marks`` the особые приметы
+    (stored as ``details``). ``emotions`` / ``outfits`` / ``props`` mirror the
+    optional-block shapes the SPA renders.
+    """
+
+    card: dict[str, str] = Field(default_factory=dict)
+    marks: str = ""
+    emotions: dict[str, Any] = Field(default_factory=dict)
+    outfits: dict[str, Any] = Field(default_factory=dict)
+    props: dict[str, Any] = Field(default_factory=dict)
 
 
 def _cost_payload(ledger: CostLedger) -> dict[str, Any]:
@@ -141,6 +172,62 @@ def _saved_characters() -> list[dict[str, Any]]:
     return rows
 
 
+# Card fields shown on the anketa (the 8th table key, ``details``, is the
+# free-form особые приметы edited separately as ``marks``).
+_CARD_KEYS: tuple[str, ...] = ("gender", "age", "build", "hair", "eyes", "skin", "role")
+
+
+def _character_payload(state: CharacterState) -> dict[str, Any]:
+    """Serialise a full character into the anketa shape the SPA renders."""
+    table = normalize_character_table(state.character_table)
+    return {
+        "id": state.character_id,
+        "name": state.name or state.character_id,
+        "card": {key: table.get(key, "") for key in _CARD_KEYS},
+        "marks": table.get("details", ""),
+        "base_outfit": state.base_outfit.prompt,
+        "emotions": {
+            "enabled": state.emotions.enabled,
+            "items": [{"value": item.value, "ref": item.ref} for item in state.emotions.items],
+            "base": {
+                "enabled": state.emotions.base_emotion.enabled,
+                "value": state.emotions.base_emotion.value,
+            },
+        },
+        "outfits": {
+            "enabled": state.outfits_enabled,
+            "list": [
+                {"id": outfit.id, "name": outfit.prompt, "complex": outfit.complex}
+                for outfit in state.outfits
+            ],
+        },
+        "props": {
+            "enabled": state.props_enabled,
+            "list": [
+                {"id": prop.id, "name": prop.name, "shots": len(prop.shots) or 1}
+                for prop in state.props
+            ],
+        },
+        "phase": _SCREEN_TO_PHASE.get(resume_screen(state), "data"),
+        "cost": _cost_payload(state.cost),
+    }
+
+
+def _load_for_session(sess: WizardSession, character_id: str) -> CharacterState | None:
+    """Resolve a character: the in-memory session copy if it matches, else the bucket.
+
+    The session copy may carry unsaved edits, so it wins; otherwise we fall back
+    to the persisted state (resume / open-saved). Either way the resolved state
+    becomes the session's active character.
+    """
+    if sess.character is not None and sess.character.character_id == character_id:
+        return sess.character
+    state = load_state(character_id)
+    if state is not None:
+        sess.character = state
+    return state
+
+
 def _get_session(request: Request, response: Response) -> WizardSession:
     """Resolve the cookie-bound session, minting + setting the cookie if absent."""
     sid = request.cookies.get(_SESSION_COOKIE)
@@ -188,6 +275,58 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             for i, ec in enumerate(sess.extracted_characters)
         ]
         return {"characters": characters, "cost": _cost_payload(sess.cost)}
+
+    @app.post("/api/character")
+    def create_character(
+        body: CreateRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Create + persist a character from a picked extraction draft."""
+        sess = _get_session(request, response)
+        draft = next(
+            (ec for ec in sess.extracted_characters if getattr(ec, "name", None) == body.name),
+            None,
+        )
+        if draft is None:
+            raise HTTPException(status_code=404, detail="character draft not found")
+        state = character_from_extracted(draft, style_prompt=sess.style_prompt)
+        sess.character = state
+        save_state(state)
+        return {"character": _character_payload(state)}
+
+    @app.get("/api/character/{character_id}")
+    def get_character(character_id: str, request: Request, response: Response) -> dict[str, Any]:
+        """Load a character (session copy or bucket) for resume / anketa render."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        return {"character": _character_payload(state)}
+
+    @app.put("/api/character/{character_id}/anketa")
+    def save_anketa(
+        character_id: str, body: AnketaRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Persist the edited anketa (trait card, приметы, optional blocks)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        apply_table(state, {**body.card, "details": body.marks})
+        base = body.emotions.get("base") or {}
+        set_emotions_enabled(state, bool(body.emotions.get("enabled")))
+        set_base_emotion(state, bool(base.get("enabled")), str(base.get("value") or ""))
+        set_outfits_enabled(state, bool(body.outfits.get("enabled")))
+        sync_outfits(
+            state,
+            [
+                [o.get("name", ""), o.get("complex", False)]
+                for o in (body.outfits.get("list") or [])
+            ],
+        )
+        set_props_enabled(state, bool(body.props.get("enabled")))
+        sync_props(state, [[p.get("name", "")] for p in (body.props.get("list") or [])])
+        save_state(state)
+        return {"character": _character_payload(state)}
 
     web_root = web_dir or _REPO_WEB
     if web_root.is_dir():

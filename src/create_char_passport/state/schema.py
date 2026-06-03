@@ -25,15 +25,63 @@ _DEFAULT_EMOTIONS: tuple[tuple[str, str], ...] = (
 
 _NAME_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+# Cyrillic -> Latin so Russian names yield distinct, readable folder ids. Without
+# this, NFKD + ASCII-strip wipes every Cyrillic name to "" and *all* characters
+# collide on the "character" fallback id (one folder overwrites the next).
+_CYRILLIC_TO_LATIN: dict[str, str] = {
+    "а": "a",
+    "б": "b",
+    "в": "v",
+    "г": "g",
+    "д": "d",
+    "е": "e",
+    "ё": "e",
+    "ж": "zh",
+    "з": "z",
+    "и": "i",
+    "й": "y",
+    "к": "k",
+    "л": "l",
+    "м": "m",
+    "н": "n",
+    "о": "o",
+    "п": "p",
+    "р": "r",
+    "с": "s",
+    "т": "t",
+    "у": "u",
+    "ф": "f",
+    "х": "h",
+    "ц": "ts",
+    "ч": "ch",
+    "ш": "sh",
+    "щ": "sch",
+    "ъ": "",
+    "ы": "y",
+    "ь": "",
+    "э": "e",
+    "ю": "yu",
+    "я": "ya",
+}
+
+
+def _transliterate(text: str) -> str:
+    """Lower-case ``text`` and map Cyrillic letters to Latin (other chars kept)."""
+    return "".join(_CYRILLIC_TO_LATIN.get(ch, ch) for ch in text.lower())
+
 
 def character_id_from_name(name: str) -> str:
     """Deterministic kebab-case id for a character name.
 
-    Empty / whitespace-only names collapse to ``"character"`` so we always
-    have a usable folder name; the canonical id is whatever ends up in
-    ``CharacterState.character_id``.
+    Cyrillic is transliterated first (so "Герон" -> "geron", "Тайра" -> "tayra")
+    so distinct Russian names map to distinct ids. Empty / whitespace-only names
+    collapse to ``"character"`` so we always have a usable folder name; the
+    canonical id is whatever ends up in ``CharacterState.character_id``.
     """
-    normalized = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    transliterated = _transliterate(name)
+    normalized = (
+        unicodedata.normalize("NFKD", transliterated).encode("ascii", "ignore").decode("ascii")
+    )
     slug = _NAME_SLUG_RE.sub("-", normalized.lower()).strip("-")
     return slug or "character"
 
