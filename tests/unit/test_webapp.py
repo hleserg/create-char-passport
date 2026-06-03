@@ -241,6 +241,35 @@ def test_save_anketa_not_found_404(client: TestClient) -> None:
     assert client.put("/api/character/ghost/anketa", json={"card": {}}).status_code == 404
 
 
+def test_compose_layers_from_table(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from create_char_passport.wizard import ComposedLayers
+
+    cid = _make_character(client, monkeypatch)
+    monkeypatch.setattr(
+        webapp,
+        "compose_layers",
+        lambda table, meter=None: ComposedLayers(
+            face="broad nose, scar", body="stocky", outfit="leather tunic", base_emotion="grim"
+        ),
+    )
+    res = client.post(
+        f"/api/character/{cid}/compose",
+        json={"card": {"gender": "male", "age": "40"}, "marks": "scar on cheek"},
+    ).json()
+    assert res["layers"]["face"] == "broad nose, scar"
+    assert res["layers"]["outfit"] == "leather tunic"
+    assert res["layers"]["base_emotion"] == "grim"
+    # the edited card + marks were persisted to the table first
+    body = client.get(f"/api/character/{cid}").json()["character"]
+    assert body["card"]["age"] == "40"
+    assert body["marks"] == "scar on cheek"
+    assert body["emotions"]["base"]["value"] == "grim"
+
+
+def test_compose_not_found_404(client: TestClient) -> None:
+    assert client.post("/api/character/ghost/compose", json={"card": {}}).status_code == 404
+
+
 # --------------------------------------------------------------------------- #
 # passport: serialize / generate / approve / image
 # --------------------------------------------------------------------------- #
