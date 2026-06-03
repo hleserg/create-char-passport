@@ -36,6 +36,7 @@ import os
 import secrets
 import shutil
 import tempfile
+import threading
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -653,24 +654,29 @@ def _local_image(path: Path) -> Path:
         return path
     if not local.exists():
         try:
-            shutil.copyfile(path, local)
+            # Copy to a per-thread temp then atomically rename, so a reader (or a
+            # concurrent warm) never observes a half-written cache file — the warm
+            # now runs in a background thread and can race an /image GET.
+            tmp = local.with_name(f"{local.name}.{threading.get_ident()}.tmp")
+            shutil.copyfile(path, tmp)
+            tmp.replace(local)
         except OSError:
             return path
     return local
 
 
 def _warm_image_path(image_path: str | None) -> None:
-    """Pre-copy a freshly generated frame into the local image cache.
+    """Best-effort, OFF-critical-path pre-copy of a fresh frame into the cache.
 
-    The bucket (Xet FUSE) is slow on first read, so without this the browser's
-    image request right after a successful generate can stall for many seconds
-    (the frame says "готово" but no picture appears). Warming server-side moves
-    that one slow read into the generate call (already slow) so the immediately
-    following ``/image`` GET is a fast local cache hit. Never raises —
-    :func:`_local_image` already degrades to the bucket path on any error.
+    The bucket (Xet FUSE) is slow on first read. Warming the local cache helps a
+    later view, but it MUST NOT run synchronously inside the generate endpoint —
+    a multi-second bucket read there would push the generate response past client
+    / proxy timeouts. So we fire it on a daemon thread and return immediately;
+    :func:`_local_image` is self-contained (atomic copy, degrades to the bucket
+    path on error), so a racing ``/image`` GET stays correct either way.
     """
     if image_path:
-        _local_image(Path(image_path))
+        threading.Thread(target=_local_image, args=(Path(image_path),), daemon=True).start()
 
 
 def _serve_image(path: Path, width: int | None) -> Response:
