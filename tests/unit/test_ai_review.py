@@ -132,6 +132,23 @@ def test_check_step_malformed_twice() -> None:
     assert out.new_prompt is None
 
 
+def test_check_step_frozen_frame_targets_composition_with_real_scene() -> None:
+    # On a frozen frame the reviewer must judge the image against the COMPOSITION
+    # scene (the real preset, injected via build_step_overrides), not grab STYLE.
+    call = _Call("{ок}[]")
+    check_step(blank_state("Conan"), "passport_3q", call=call)
+    prompt = call.prompts[0]
+    assert "[COMPOSITION]" in prompt  # the target layer
+    assert "neutral grey background" in prompt.lower()  # the real scene preset is present
+    assert "STYLE" in prompt  # style is explicitly declared off-limits
+
+
+def test_check_step_face_frame_targets_face_layer() -> None:
+    call = _Call("{ок}[]")
+    check_step(blank_state("Conan"), "passport_face", call=call)
+    assert "[FACE]" in call.prompts[0]
+
+
 # --------------------------------------------------------------------------- #
 # edit_character
 # --------------------------------------------------------------------------- #
@@ -236,14 +253,18 @@ def test_apply_step_prompt_prop_and_dataset() -> None:
     assert state.dataset_compositions[0] == "full body, crouching"
 
 
-def test_apply_step_prompt_frozen_passport_frame_returns_false() -> None:
-    # A frozen passport frame (profile/back/3q) has no editable layer → a true
-    # no-op, reported as False (not a phantom write that clobbers FACE).
+def test_apply_step_prompt_frozen_passport_frame_writes_scene_override() -> None:
+    # A frozen passport frame (profile/back/3q) has FACE/BODY locked, so an
+    # accepted prompt targets the COMPOSITION scene -> persisted as a scene
+    # override, NEVER clobbering the frozen FACE.
+    from create_char_passport.gen import SceneId
+
     state = blank_state("Conan")
     state.prompt_layers.face = "original identity"
-    assert apply_step_prompt(state, "passport_profile", "should not write") is False
-    assert state.prompt_layers.face == "original identity"
-    # FACE/BODY frames still write and report True.
+    assert apply_step_prompt(state, "passport_3q", "low angle, dramatic backlight") is True
+    assert state.prompt_layers.face == "original identity"  # FACE untouched
+    assert state.scene_overrides[SceneId.THREE_QUARTER_FULL] == "low angle, dramatic backlight"
+    # FACE/BODY frames still write their own layer and report True.
     assert apply_step_prompt(state, "passport_face", "rugged jaw") is True
     assert state.prompt_layers.face == "rugged jaw"
 

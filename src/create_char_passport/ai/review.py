@@ -27,7 +27,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from create_char_passport.gen import build_prompt_layers, call_llm
+from create_char_passport.gen import (
+    build_prompt_layers,
+    build_step_overrides,
+    call_llm,
+    scene_for_step,
+    set_scene_override,
+)
 from create_char_passport.gen.prompt import render_prompt_text
 from create_char_passport.state import (
     CharacterState,
@@ -190,12 +196,40 @@ def _image_b64(preview_path: str | Path | None) -> str | None:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
-def _check_prompt(checklist: str, rendered_layers: str) -> str:
+def _check_target_layer(step_key: str) -> str:
+    """The ONE prompt layer the check evaluates + may rewrite for ``step_key``.
+
+    Passport: the editable layer of the frame — FACE / BODY on the base frames,
+    and COMPOSITION (the scene) on the frozen camera-only frames (profile / back /
+    3-4), where FACE/BODY are already locked and only the framing/scene is
+    adjustable. Emotions → EXPRESSION; outfit → OUTFIT; everything else (outfit
+    detail / prop / dataset) is governed by its COMPOSITION/framing.
+    """
+    kind = classify_step(step_key)
+    if kind is StepKind.PASSPORT:
+        editable = editable_layers(step_key)
+        if "face" in editable:
+            return "FACE"
+        if "body" in editable:
+            return "BODY"
+        return "COMPOSITION"
+    if kind in (StepKind.EMOTION, StepKind.BASE_EMOTION):
+        return "EXPRESSION"
+    if kind is StepKind.OUTFIT:
+        return "OUTFIT"
+    return "COMPOSITION"
+
+
+def _check_prompt(checklist: str, rendered_layers: str, target: str) -> str:
     return (
-        "Ты ревизор промтов для генератора изображений персонажей. Проверь ТЕКУЩИЙ "
-        "шаг по критериям и при необходимости предложи улучшенный промт.\n\n"
+        "Ты ревизор кадров для генератора изображений персонажей. Оцени, насколько "
+        f"СГЕНЕРИРОВАННОЕ ИЗОБРАЖЕНИЕ соответствует слою [{target}] этого шага, и при "
+        "необходимости предложи улучшенный промт ИМЕННО для этого слоя.\n\n"
         f"Критерии шага:\n{checklist}\n\n"
-        f"Текущий промт шага (по слоям):\n{rendered_layers}\n\n"
+        f"Промт шага (по слоям; оценивай изображение против слоя [{target}]):\n"
+        f"{rendered_layers}\n\n"
+        f"Правку предлагай ТОЛЬКО для слоя [{target}]. Слой [STYLE] — общий и "
+        "заморожен, его НЕ трогай и НЕ возвращай как промт.\n\n"
         f"{_RESPONSE_HINT}"
     )
 
@@ -226,7 +260,8 @@ def _character_context(state: CharacterState) -> str:
         lines.append(f"Базовая эмоция: {base.value}")
     lines.append("\nШаги и их текущие промты:")
     for key in editable_step_keys(state):
-        lines.append(f"&{key}&\n{render_prompt_text(build_prompt_layers(state, key))}")
+        layers = build_prompt_layers(state, key, overrides=build_step_overrides(state, key))
+        lines.append(f"&{key}&\n{render_prompt_text(layers)}")
     return "\n".join(lines)
 
 
@@ -255,7 +290,11 @@ def check_step(
 ) -> CheckOutcome:
     """Run "Check with AI" for ``step_key`` and parse the reply."""
     checklist = CHECKLISTS[classify_step(step_key)]
-    prompt = _check_prompt(checklist, render_prompt_text(build_prompt_layers(state, step_key)))
+    # Build with the scene override so the COMPOSITION layer carries the REAL
+    # scene preset the image was generated with (without this it is empty, and the
+    # reviewer hallucinates "no framing/background" and grabs the STYLE block).
+    layers = build_prompt_layers(state, step_key, overrides=build_step_overrides(state, step_key))
+    prompt = _check_prompt(checklist, render_prompt_text(layers), _check_target_layer(step_key))
     image_b64 = _image_b64(preview_path)
     reply = call(prompt, image_b64, meter=meter, model=model)
     if not reply.strip():
@@ -313,14 +352,19 @@ def apply_step_prompt(state: CharacterState, step_key: str, new_prompt: str) -> 
     kind = classify_step(step_key)
     text = new_prompt.strip()
     if kind is StepKind.PASSPORT:
-        # FACE/BODY only on their own frame; a frozen frame (profile/back/3q has
-        # no editable layer) is a true no-op → report False, not a phantom write.
         editable = editable_layers(step_key)
         if step_key == "passport_body" and "body" in editable:
             apply_layer_edit(state, step_key, body=text)
             return True
         if "face" in editable:
             apply_layer_edit(state, step_key, face=text)
+            return True
+        # Frozen frame (profile/back/3q): FACE/BODY are locked, so the only
+        # adjustable layer is the COMPOSITION scene — persist it as a per-character
+        # scene override (the «Изменить сцену» mechanism).
+        scene = scene_for_step(step_key)
+        if scene is not None:
+            set_scene_override(state, scene, text)
             return True
         return False
     if kind is StepKind.BASE_EMOTION:
