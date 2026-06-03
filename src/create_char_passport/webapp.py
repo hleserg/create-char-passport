@@ -31,6 +31,7 @@ Design rules carried over from the Gradio layer:
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import secrets
@@ -42,6 +43,7 @@ from typing import Any
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 from pydantic import BaseModel, Field
 
 from create_char_passport.gen import SceneId
@@ -540,6 +542,31 @@ def _build_archive(state: CharacterState) -> Path:
     return Path(tmp.name)
 
 
+def _serve_image(path: Path, width: int | None) -> Response:
+    """Serve an image, optionally downscaled to ``width`` px for fast review grids.
+
+    The stored refs/frames are full-size (hundreds of KB to a couple of MB);
+    review thumbnails only need a few hundred px. With ``width`` we return a small
+    cached JPEG; without it (or if the file isn't a decodable image) we stream the
+    original file unchanged.
+    """
+    if width and 0 < width <= 2048:
+        try:
+            with Image.open(path) as im:
+                im = im.convert("RGB")
+                im.thumbnail((width, width))
+                buf = io.BytesIO()
+                im.save(buf, format="JPEG", quality=82)
+            return Response(
+                content=buf.getvalue(),
+                media_type="image/jpeg",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
+        except (OSError, ValueError):
+            pass  # not a decodable image — fall through to the raw file
+    return FileResponse(str(path))
+
+
 def _load_for_session(sess: WizardSession, character_id: str) -> CharacterState | None:
     """Resolve a character: the in-memory session copy if it matches, else the bucket.
 
@@ -782,14 +809,14 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         return {"passport": _passport_payload(state)}
 
     @app.get("/api/character/{character_id}/image/{step_key}")
-    def frame_image(character_id: str, step_key: str) -> FileResponse:
-        """Serve a character's generated frame ``refs/<step_key>.png``."""
+    def frame_image(character_id: str, step_key: str, w: int | None = None) -> Response:
+        """Serve a character's generated frame ``refs/<step_key>.png`` (``?w=`` thumbnail)."""
         if not step_key.replace("_", "").isalnum():
             raise HTTPException(status_code=400, detail="bad step key")
         path = character_asset(character_id, f"{REFS_DIR}/{step_key}.png")
         if not path.is_file():
             raise HTTPException(status_code=404, detail="no image")
-        return FileResponse(str(path))
+        return _serve_image(path, w)
 
     @app.get("/api/character/{character_id}/emotions")
     def emotions(character_id: str, request: Request, response: Response) -> dict[str, Any]:
@@ -1114,14 +1141,14 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         return {"style": _style_payload()}
 
     @app.get("/api/style/ref/{key}")
-    def style_ref_image(key: str) -> FileResponse:
-        """Serve a stored style reference image (``ref_<n>``)."""
+    def style_ref_image(key: str, w: int | None = None) -> Response:
+        """Serve a stored style reference image (``ref_<n>``; ``?w=`` thumbnail)."""
         if not key.replace("_", "").isalnum():
             raise HTTPException(status_code=400, detail="bad key")
         path = _style_dir() / f"{key}.png"
         if not path.is_file():
             raise HTTPException(status_code=404, detail="no image")
-        return FileResponse(str(path))
+        return _serve_image(path, w)
 
     web_root = web_dir or _web_dir_from_env() or _REPO_WEB
     if web_root.is_dir():

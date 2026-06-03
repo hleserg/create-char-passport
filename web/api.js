@@ -47,8 +47,8 @@
     styleReset() {
       return jsonFetch("/api/style/reset", { method: "POST" });
     },
-    styleRefUrl(key, v) {
-      return "/api/style/ref/" + encodeURIComponent(key) + "?v=" + (v || 0);
+    styleRefUrl(key, w) {
+      return "/api/style/ref/" + encodeURIComponent(key) + (w ? "?w=" + w : "");
     },
     /* paste a story -> extracted character drafts ({characters, cost}) */
     extract(text) {
@@ -155,9 +155,11 @@
     archiveUrl(id) {
       return "/api/character/" + encodeURIComponent(id) + "/archive";
     },
-    /* URL of a generated frame image (v busts the cache after a regenerate) */
-    imageUrl(id, stepKey, v) {
-      return "/api/character/" + encodeURIComponent(id) + "/image/" + encodeURIComponent(stepKey) + "?v=" + (v || 0);
+    /* URL of a generated frame image. v busts the cache after a regenerate;
+       w requests a downscaled thumbnail (fast review grids). */
+    imageUrl(id, stepKey, v, w) {
+      return "/api/character/" + encodeURIComponent(id) + "/image/" + encodeURIComponent(stepKey)
+        + "?v=" + (v || 0) + (w ? "&w=" + w : "");
     },
   };
 })();

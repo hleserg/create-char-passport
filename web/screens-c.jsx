@@ -24,7 +24,7 @@ function SceneCard({ id, index, scene, label, fig, req, getGen, onUpdate, regist
   // expose gen() so the parent can "догенерить недостающие"
   React.useEffect(() => { register && scene && register(scene.scene, gen); });
 
-  const imgSrc = id && scene && st === "ready" ? window.api.imageUrl(id, scene.step_key, v) : null;
+  const imgSrc = id && scene && st === "ready" ? window.api.imageUrl(id, scene.step_key, v, 400) : null;
   return (
     <div className="pv-col">
       <div className="pv-title">{label}{req && <span style={{ color: "var(--red)" }}> *</span>}</div>
@@ -223,7 +223,7 @@ function OutfitDetailRow({ id, index, detail, onUpdate, onDelete }) {
     setSt("gen");
     try { const d = await window.api.outfitDetail(id, "generate", { index: index, n: detail.n, prompt: prompt }); setV((x) => x + 1); setSt(d.ok ? "ready" : "empty"); onUpdate && d.outfits && onUpdate(d.outfits); } catch (e) { setSt("empty"); }
   }
-  const imgSrc = id && st === "ready" ? window.api.imageUrl(id, detail.step_key, v) : null;
+  const imgSrc = id && st === "ready" ? window.api.imageUrl(id, detail.step_key, v, 320) : null;
   return (
     <div className="panel soft" style={{ marginBottom: 12 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 130px", gap: 14, alignItems: "start" }}>
@@ -269,7 +269,7 @@ function PropShot({ id, index, shot, total, onUpdate, onDelete }) {
       onUpdate && d.props && onUpdate(d.props);
     } catch (e) { setSt("empty"); }
   }
-  const imgSrc = id && st === "ready" ? window.api.imageUrl(id, shot.step_key, v) : null;
+  const imgSrc = id && st === "ready" ? window.api.imageUrl(id, shot.step_key, v, 320) : null;
   return (
     <Panel className="soft" marks={false}>
       <div className="panel-h" style={{ marginBottom: 12 }}>
