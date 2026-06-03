@@ -147,6 +147,39 @@ SCENE_PRESETS: dict[str, str] = {
     ),
 }
 
+# Output aspect ratio per scene (Gemini image_config.aspect_ratio). Portraits and
+# object/detail shots are square so there are no grey side-bars; full-length
+# scenes are tall to fit head-to-toe without padding. Values are the ratios the
+# image model accepts ("1:1", "2:3", …).
+SCENE_ASPECT: dict[str, str] = {
+    SceneId.FRONT_PORTRAIT: "1:1",
+    SceneId.PROFILE_PORTRAIT: "1:1",
+    SceneId.FRONT_FULL: "2:3",
+    SceneId.BACK_FULL: "2:3",
+    SceneId.THREE_QUARTER_FULL: "2:3",
+    SceneId.PROFILE_FULL: "2:3",
+    SceneId.DETAIL_CLOSEUP: "1:1",
+    SceneId.PRODUCT_SHOT: "1:1",
+}
+_DEFAULT_ASPECT = "1:1"
+
+
+def aspect_for_scene(scene_id: str) -> str:
+    """Output aspect ratio for ``scene_id`` (square default for unknown scenes)."""
+    return SCENE_ASPECT.get(scene_id, _DEFAULT_ASPECT)
+
+
+def aspect_for_step(step_key: str) -> str:
+    """Aspect ratio for a single-scene ``step_key`` (square when it has no scene).
+
+    Mirrors :func:`scene_for_step`: passport frames + the base/series emotion
+    portraits resolve to their scene's ratio; multi-scene or free-form steps
+    (outfit / dataset) fall back to square — those callers pass an explicit scene.
+    """
+    scene = scene_for_step(step_key)
+    return aspect_for_scene(scene) if scene is not None else _DEFAULT_ASPECT
+
+
 # Single-scene steps → their canonical scene. Steps that emit several scenes
 # (outfit) or carry free-form composition (dataset) are absent: callers resolve
 # those scenes directly via :func:`effective_composition`.

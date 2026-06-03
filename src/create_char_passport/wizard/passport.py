@@ -28,6 +28,7 @@ from __future__ import annotations
 from create_char_passport.gen import (
     GenerationResult,
     Ref,
+    aspect_for_step,
     build_prompt_layers,
     build_step_overrides,
     generate_image,
@@ -289,6 +290,7 @@ def generate_passport_frame(
         output_path=pending,
         model=model,
         meter=meter,
+        aspect_ratio=aspect_for_step(step_key),  # portraits 1:1, full-length 2:3
     )
     if not result.ok:
         pending.unlink(missing_ok=True)

@@ -209,14 +209,17 @@ def generate_image(
     output_path: str | Path,
     model: str | None = None,
     meter: CostLedger | None = None,
+    aspect_ratio: str | None = None,
 ) -> GenerationResult:
     """Render one image — single entry point used by every generation step.
 
     ``output_path`` is where the resulting PNG bytes are written when the
     call succeeds. ``model`` overrides ``settings.image_model`` (useful for
-    swapping to Nano Banana Pro when identity drifts on NB2). When a ``meter``
-    is passed, a *successful* call's cost is added to it (a failed call is
-    never billed).
+    swapping to Nano Banana Pro when identity drifts on NB2). ``aspect_ratio``
+    (e.g. ``"1:1"`` for portraits, ``"2:3"`` for full-length) sets the output
+    shape so frames are not padded with grey side-bars. When a ``meter`` is
+    passed, a *successful* call's cost is added to it (a failed call is never
+    billed).
     """
     try:
         from google.genai import types as genai_types  # type: ignore[import-not-found]
@@ -228,6 +231,9 @@ def generate_image(
         client = _get_client()
         config = genai_types.GenerateContentConfig(
             response_modalities=[genai_types.Modality.IMAGE, genai_types.Modality.TEXT],
+            image_config=(
+                genai_types.ImageConfig(aspect_ratio=aspect_ratio) if aspect_ratio else None
+            ),
         )
         response = client.models.generate_content(
             model=resolved_model,

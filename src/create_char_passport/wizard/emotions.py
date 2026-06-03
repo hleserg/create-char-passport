@@ -16,7 +16,12 @@ page-level approve simply moves on, and an incomplete set is allowed.
 
 from __future__ import annotations
 
-from create_char_passport.gen import GenerationResult, build_prompt_layers, build_step_overrides
+from create_char_passport.gen import (
+    GenerationResult,
+    aspect_for_step,
+    build_prompt_layers,
+    build_step_overrides,
+)
 from create_char_passport.state import (
     BASE_EMOTION_STEP,
     CharacterState,
@@ -46,7 +51,13 @@ def _render(
     """Build the portrait layers for ``step_key`` and render it with identity refs."""
     layers = build_prompt_layers(state, step_key, overrides=build_step_overrides(state, step_key))
     return render_step_image(
-        state, step_key, layers, identity_refs(state), meter=meter, model=model
+        state,
+        step_key,
+        layers,
+        identity_refs(state),
+        meter=meter,
+        model=model,
+        aspect_ratio=aspect_for_step(step_key),  # emotion portraits are 1:1
     )
 
 

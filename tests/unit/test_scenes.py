@@ -6,9 +6,12 @@ import pytest
 
 from create_char_passport.gen import build_prompt_layers
 from create_char_passport.gen.scenes import (
+    SCENE_ASPECT,
     SCENE_LABELS,
     SCENE_PRESETS,
     SceneId,
+    aspect_for_scene,
+    aspect_for_step,
     build_step_overrides,
     clear_scene_override,
     default_composition,
@@ -51,6 +54,24 @@ def test_default_composition_unknown_raises() -> None:
 )
 def test_scene_for_step_single_scene_steps(step_key: str, expected: SceneId) -> None:
     assert scene_for_step(step_key) == expected
+
+
+def test_every_scene_has_an_aspect_ratio() -> None:
+    # Portraits / object shots are square (no grey side-bars); full-length is tall.
+    assert all(scene in SCENE_ASPECT for scene in SceneId)
+    assert aspect_for_scene(SceneId.FRONT_PORTRAIT) == "1:1"
+    assert aspect_for_scene(SceneId.PRODUCT_SHOT) == "1:1"
+    assert aspect_for_scene(SceneId.FRONT_FULL) == "2:3"
+
+
+def test_aspect_for_step_portraits_square_fullbody_tall() -> None:
+    assert aspect_for_step("passport_face") == "1:1"  # portrait
+    assert aspect_for_step("passport_profile") == "1:1"  # portrait
+    assert aspect_for_step("base_emotion") == "1:1"  # emotion portrait
+    assert aspect_for_step("emotion_grim_brooding") == "1:1"  # emotion-series portrait
+    assert aspect_for_step("passport_body") == "2:3"  # full-length
+    assert aspect_for_step("passport_back") == "2:3"
+    assert aspect_for_step("outfit_outfit_1") == "1:1"  # multi-scene -> square default
 
 
 def test_composition_presets_carry_no_expression() -> None:

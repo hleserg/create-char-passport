@@ -18,6 +18,7 @@ from create_char_passport.gen import (
     GenerationResult,
     Ref,
     SceneId,
+    aspect_for_scene,
     build_prompt_layers,
     effective_composition,
 )
@@ -86,7 +87,13 @@ def generate_prop_shot(
         },
     )
     result, relative = render_step_image(
-        state, prop_shot_step(prop.id, n), layers, refs, meter=meter, model=model
+        state,
+        prop_shot_step(prop.id, n),
+        layers,
+        refs,
+        meter=meter,
+        model=model,
+        aspect_ratio=aspect_for_scene(SceneId.PRODUCT_SHOT),  # square product shot
     )
     if result.ok:
         prop.shots[n - 1].ref = relative

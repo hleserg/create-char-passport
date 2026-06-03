@@ -30,7 +30,15 @@ class _Capture:
         self.calls: list[dict[str, Any]] = []
 
     def __call__(
-        self, prompt_layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None
+        self,
+        prompt_layers,
+        refs,
+        outfit_conflict=False,
+        *,
+        output_path,
+        model=None,
+        meter=None,
+        aspect_ratio=None,
     ):
         self.calls.append(
             {
