@@ -20,6 +20,28 @@ const SAMPLE_STYLE = {
   approved: true, ref_keys: [], ref_count: 0, locked: false,
 };
 
+/* Downscale a picked image to <=maxSide px PNG before upload. The Space proxy
+   drops upload bodies over ~2 MB, and full-res photos are bigger; a 1024px PNG
+   stays well under that. Returns a PNG File (falls back to the original). */
+function downscaleToPng(file, maxSide) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => resolve(blob ? new File([blob], "ref.png", { type: "image/png" }) : file), "image/png");
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
 function ScreenStart({ ctx }) {
   const [text, setText] = useS1("");
   const [extracted, setExtracted] = useS1(false);
@@ -51,7 +73,8 @@ function ScreenStart({ ctx }) {
     if (!file) return;
     setStyleBusy(true);
     try {
-      const d = await window.api.styleRefs(file);
+      const small = await downscaleToPng(file, 1024);
+      const d = await window.api.styleRefs(small);
       if (d.style) { setStyle(d.style); setStylePrompt(d.style.prompt || ""); }
     } catch (err) { /* offline preview: ignore */ }
     setStyleBusy(false);
