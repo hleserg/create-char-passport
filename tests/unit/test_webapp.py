@@ -180,7 +180,19 @@ def test_saved_payload_ready_has_no_step() -> None:
 def test_saved_characters_skips_missing(bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # A listed id whose state.json vanished (race) must be skipped, not crash.
     monkeypatch.setattr(webapp, "list_character_ids", lambda: ["ghost"])
-    assert webapp._saved_characters() == []
+    assert webapp._saved_characters(webapp.WizardSession()) == []
+
+
+def test_session_lists_just_created_character_despite_bucket_lag(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    # Simulate the bucket FUSE glob lagging — the freshly written state.json is
+    # not yet visible. The just-created character must still appear via the
+    # session merge, so the user never sees an empty list after creating one.
+    monkeypatch.setattr(webapp, "list_character_ids", lambda *a, **k: [])
+    saved = client.get("/api/session").json()["saved_characters"]
+    assert any(r["id"] == cid for r in saved)
 
 
 # --------------------------------------------------------------------------- #

@@ -381,13 +381,24 @@ def _saved_payload(state: CharacterState) -> dict[str, Any]:
     }
 
 
-def _saved_characters() -> list[dict[str, Any]]:
-    """All saved characters from the bucket, serialised for the start screen."""
+def _saved_characters(sess: WizardSession) -> list[dict[str, Any]]:
+    """All saved characters from the bucket, serialised for the start screen.
+
+    The session's active character is merged in even when the bucket listing has
+    not caught up yet — the Storage Bucket's FUSE glob can lag a freshly written
+    ``state.json`` by seconds, so without this a just-created character would be
+    missing from «Сохранённые герои» until the glob settles. Merging the live
+    session copy makes a new character appear immediately (deduped by id).
+    """
     rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for character_id in list_character_ids():
         state = load_state(character_id)
         if state is not None:
             rows.append(_saved_payload(state))
+            seen.add(character_id)
+    if sess.character is not None and sess.character.character_id not in seen:
+        rows.insert(0, _saved_payload(sess.character))
     return rows
 
 
@@ -802,7 +813,7 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         sess = _get_session(request, response)
         return {
             "cost": _cost_payload(sess.cost),
-            "saved_characters": _saved_characters(),
+            "saved_characters": _saved_characters(sess),
         }
 
     @app.post("/api/extract")
