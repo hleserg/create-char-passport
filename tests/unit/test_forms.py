@@ -164,6 +164,19 @@ def test_sync_props_drops_blank_rows() -> None:
     assert [p.name for p in state.props] == ["sword"]
 
 
+def test_sync_props_seeds_shot_count_for_new_props_only() -> None:
+    state = blank_state("Conan")
+    set_props_enabled(state, True)
+    # a brand-new prop is born with its requested shot count (clamped to 1..3)
+    sync_props(state, [["sword", 3], ["amulet", 9], ["ring"]])
+    assert [len(p.shots) for p in state.props] == [3, 3, 1]  # 9 clamped to 3, missing -> 1
+    # an EXISTING prop keeps its built shots even if the picker count differs
+    state.props[0].shots = [PropShot(what="blade", ref="refs/p.png")]
+    sync_props(state, [["sword", 2], ["amulet", 9], ["ring"]])
+    assert len(state.props[0].shots) == 1  # not truncated/grown — generated data preserved
+    assert state.props[0].shots[0].ref == "refs/p.png"
+
+
 def test_saved_characters_lists_status(tmp_path: Path) -> None:
     ready = blank_state("Lucius")
     ready.current_step = None

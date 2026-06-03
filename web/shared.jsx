@@ -513,14 +513,17 @@ function PresetPicker({ onPick, onClose }) {
 /* =========================================================
    ADVANCED SCENE — collapsible editable COMPOSITION block
    ========================================================= */
-function AdvancedScene({ value, layer = "Поза и кадр", note }) {
+function AdvancedScene({ value, onChange, dflt, layer = "Поза и кадр", note }) {
   const [open, setOpen] = useState(false);
+  const editable = typeof onChange === "function";
+  const changed = editable && dflt != null && (value || "").trim() !== (dflt || "").trim();
   return (
     <div className={"adv" + (open ? " open" : "")} style={{ marginTop: 16 }}>
       <button className="adv-head" onClick={() => setOpen(!open)}>
         <span className="ico" style={{ fontSize: 15 }}>⚙</span>
         <span style={{ whiteSpace: "nowrap" }}>Поза и кадр <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-3)" }}>COMPOSITION</span></span>
-        <span className="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }}>— редактировать сцену</span>
+        <span className="muted" style={{ fontSize: 12, whiteSpace: "nowrap" }}>— {editable ? "изменить сцену" : "редактировать сцену"}</span>
+        {changed && <span className="badge" style={{ background: "var(--amber-tint, #fff4e0)", color: "var(--amber)", marginLeft: 6 }}>изменено</span>}
         <span className="spacer" style={{ flex: 1 }}></span>
         <span className="badge ro">{open ? "скрыть" : "показать"}</span>
         <span className="tw">▾</span>
@@ -529,9 +532,14 @@ function AdvancedScene({ value, layer = "Поза и кадр", note }) {
         <div className="adv-body">
           <div className="tip" style={{ color: "var(--amber)", marginTop: 0, marginBottom: 10 }}>
             <span className="ic">⚠️</span>
-            <span>{note || <>Это поле уже настроено под этот кадр. Меняйте его <b>только</b> чтобы поправить <b>положение героя</b> и <b>ракурс камеры</b>. Фон, свет и пометки «без рамок» лучше не трогать.</>}</span>
+            <span>{note || <>Это поле уже настроено под этот кадр. Меняйте его <b>только</b> чтобы поправить <b>положение героя</b> и <b>ракурс камеры</b>. Фон, свет и пометки «без рамок» лучше не трогать. Изменения применятся при следующей генерации этого кадра.</>}</span>
           </div>
-          <PromptField value={value} rows={3} layer={layer} />
+          <PromptField value={value} onChange={onChange} rows={3} layer={layer} />
+          {changed && (
+            <div className="btnrow end" style={{ marginTop: 8 }}>
+              <button className="btn ghost sm" onClick={() => onChange(dflt)}>↩ Вернуть стандартную сцену</button>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -33,6 +33,7 @@ from create_char_passport.state import (
 )
 from create_char_passport.storage import list_character_ids, load_state
 from create_char_passport.wizard.extraction import ExtractedCharacter
+from create_char_passport.wizard.props import MAX_PROP_SHOTS
 from create_char_passport.wizard.style import apply_style
 
 BASE_OUTFIT_PLACEHOLDER: str = "(set on the passport step)"
@@ -152,20 +153,30 @@ def prop_rows(state: CharacterState) -> list[list[object]]:
 
 
 def sync_props(state: CharacterState, rows: Iterable[Iterable[object]]) -> None:
-    """Rebuild ``state.props`` from edited ``[name]`` rows, preserving shots by position."""
-    names = [_cell_str(r, 0) for r in _as_rows(rows)]
-    names = [name for name in names if name]
+    """Rebuild ``state.props`` from edited ``[name, shots?]`` rows.
+
+    Existing props are matched by position and keep their shots untouched (so the
+    per-shot ``what``/prompt/image data built on the props step is never
+    truncated — the optional ``shots`` count only seeds NEW props). A new prop is
+    born with its requested shot count, clamped to ``1..MAX_PROP_SHOTS``.
+    """
+    parsed = [(_cell_str(r, 0), _cell_int(r, 1)) for r in _as_rows(rows)]
+    parsed = [(name, shots) for name, shots in parsed if name]
     previous = list(state.props)
     rebuilt: list[PropEntry] = []
     assigned: set[str] = set()
-    for idx, name in enumerate(names):
+    for idx, (name, shots) in enumerate(parsed):
         if idx < len(previous):
             entry = previous[idx]
             entry.name = name
         else:
-            # Born with one shot (§5: "1 кадр по умолчанию"); the user adds up
-            # to MAX_PROP_SHOTS more or deletes it explicitly.
-            entry = PropEntry(id=_next_ordinal_id(assigned), name=name, shots=[PropShot()])
+            # §5: "1 кадр по умолчанию", up to MAX_PROP_SHOTS. The anketa picker
+            # may pre-seed more for a brand-new prop; existing props are never
+            # shrunk here (that would drop generated per-shot data).
+            n = max(1, min(shots or 1, MAX_PROP_SHOTS))
+            entry = PropEntry(
+                id=_next_ordinal_id(assigned), name=name, shots=[PropShot() for _ in range(n)]
+            )
         assigned.add(entry.id)
         rebuilt.append(entry)
     state.props = rebuilt
@@ -183,6 +194,16 @@ def _cell_str(row: list[object], idx: int) -> str:
     if idx >= len(row) or row[idx] is None:
         return ""
     return str(row[idx]).strip()
+
+
+def _cell_int(row: list[object], idx: int) -> int:
+    """Read a cell as a non-negative int (0 when missing/None/unparseable)."""
+    if idx >= len(row) or row[idx] is None:
+        return 0
+    try:
+        return max(0, int(float(str(row[idx]).strip())))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _cell_bool(row: list[object], idx: int) -> bool:

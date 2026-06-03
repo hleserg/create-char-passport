@@ -229,6 +229,8 @@ function ScreenPassport({ ctx }) {
   const [err, setErr] = useS2(null);
   const [edit, setEdit] = useS2(false);
   const [frameCheck, setFrameCheck] = useS2(null);
+  const [comp, setComp] = useS2("");      // editable COMPOSITION (scene) for this frame
+  const [compDflt, setCompDflt] = useS2(""); // registry default (for the reset button)
 
   const serverKey = "passport_" + frame.key;
 
@@ -257,7 +259,16 @@ function ScreenPassport({ ctx }) {
     }
     let alive = true;
     window.api.getPassport(ctx.activeCharId)
-      .then((d) => { if (alive && d && d.passport) setPp(d.passport); })
+      .then((d) => {
+        if (!alive || !d || !d.passport) return;
+        setPp(d.passport);
+        // Resume on the frame the backend points at (earliest need_regen, else the
+        // saved step) instead of always frame 1 — honours «откроем на том шаге, где
+        // вы остановились» + the need_regen gate. Mount/char-keyed so it won't
+        // fight in-phase chip/Back navigation.
+        const i = FRAMES.findIndex((f) => "passport_" + f.key === d.passport.current_step);
+        if (i >= 0 && i !== step) ctx.setPStep(i);
+      })
       .catch(() => {});
     return () => { alive = false; };
   }, [ctx.activeCharId]);
@@ -267,6 +278,8 @@ function ScreenPassport({ ctx }) {
     if (!pp || !pp.frames[step]) return;
     const f = pp.frames[step];
     setFace(f.face || ""); setBody(f.body || ""); setOutfit(f.outfit || "");
+    setComp(f.composition || FRAME_COMP[frame.key] || "");
+    setCompDflt(f.scene_default || FRAME_COMP[frame.key] || "");
     setGen(f.has_image ? "ready" : "empty");
     setErr(null);
   }, [pp, step]);
@@ -277,14 +290,14 @@ function ScreenPassport({ ctx }) {
     const regenerate = gen === "ready";
     setGen("gen"); setErr(null);
     try {
-      const d = await window.api.passportGenerate(ctx.activeCharId, { step_key: serverKey, face, body, outfit, regenerate });
+      const d = await window.api.passportGenerate(ctx.activeCharId, { step_key: serverKey, face, body, outfit, composition: comp, regenerate });
       if (d.passport) setPp(d.passport);
       setImgV((v) => v + 1);
       setGen(d.ok ? "ready" : "empty");
       if (!d.ok) setErr(d.error || "Не удалось сгенерировать кадр");
       window.setLastGen({
         section: "Паспорт", view: frame.title, model: "nano-banana", size: "1024×1536",
-        layers: { style: (pp && pp.style) || "", face: face, body: step >= 1 ? body : "", outfit: outfit, composition: FRAME_COMP[frame.key] },
+        layers: { style: (pp && pp.style) || "", face: face, body: step >= 1 ? body : "", outfit: outfit, composition: comp || FRAME_COMP[frame.key] },
         refs: frame.key === "face"
           ? [{ label: "стиль-реф", kind: "item" }]
           : (["profile", "back", "3q"].includes(frame.key)
@@ -299,7 +312,14 @@ function ScreenPassport({ ctx }) {
     if (ctx.activeCharId && gen === "ready") {
       try {
         const d = await window.api.passportApprove(ctx.activeCharId, serverKey);
-        if (d.passport) setPp(d.passport);
+        if (d.passport) {
+          setPp(d.passport);
+          // need_regen gate: if a prior frame is now flagged for regeneration
+          // (e.g. an accepted «Правка с ИИ»), pull the user back to it instead of
+          // blindly advancing past a step that's waiting.
+          const i = FRAMES.findIndex((f) => "passport_" + f.key === d.passport.current_step);
+          if (!isLast && i >= 0 && i !== step + 1) { ctx.setPStep(i); window.scrollTo({ top: 0 }); return; }
+        }
       } catch (e) { /* navigate anyway */ }
     }
     if (isLast) ctx.go("emotions"); else ctx.setPStep(step + 1);
@@ -327,6 +347,8 @@ function ScreenPassport({ ctx }) {
             : (<><Figure kind={frame.fig} size={92} /><span className="pv-cap">нажмите «Сгенерировать»</span></>)}
       </div>
       {err && <div className="notice red" style={{ marginTop: 10 }}><span className="ic">⚠️</span><span className="tx">{err}</span></div>}
+      {pp && pp.frames[step] && pp.frames[step].warning &&
+        <div className="notice" style={{ marginTop: 10 }}><span className="ic">⚠️</span><span className="tx">{pp.frames[step].warning}</span></div>}
       <div className="btnrow" style={{ marginTop: 12 }}>
         <button className="btn primary" onClick={doGen}>{gen === "ready" ? "↻ Перегенерировать" : "Сгенерировать кадр"}</button>
         <AIButton onClick={doCheckFrame}>Проверить кадр с ИИ</AIButton>
@@ -344,8 +366,8 @@ function ScreenPassport({ ctx }) {
   );
 
   const sceneBlock = (
-    <AdvancedScene key={"scene-" + frame.key} value={FRAME_COMP[frame.key]}
-      note={<>Это поле уже настроено под этот паспортный кадр. Меняйте его <b>только</b> чтобы поправить <b>положение героя</b> и <b>ракурс камеры</b> ближе к нужному виду (например, если герой смотрит не туда). Фон, свет и пометки «без рамок» лучше не трогать.</>} />
+    <AdvancedScene key={"scene-" + frame.key} value={comp} onChange={setComp} dflt={compDflt}
+      note={<>Это поле уже настроено под этот паспортный кадр. Меняйте его <b>только</b> чтобы поправить <b>положение героя</b> и <b>ракурс камеры</b> ближе к нужному виду (например, если герой смотрит не туда). Фон, свет и пометки «без рамок» лучше не трогать. Изменение применится при следующей генерации кадра и сохранится для этого героя.</>} />
   );
 
   return (
@@ -507,6 +529,14 @@ function ScreenEmotions({ ctx }) {
     if (!ctx.activeCharId) { setEmo((e) => Object.assign({}, e || {}, { enabled: next })); return; }
     try { const d = await window.api.emotionEnable(ctx.activeCharId, next); if (d.emotions) setEmo(d.emotions); } catch (e) { /* ignore */ }
   }
+  // Persist the base-emotion on/off to the server (free, value-preserving), so
+  // turning it off actually stops it contaminating downstream scenes + survives
+  // reload — not just a local dim.
+  async function toggleBase(next) {
+    setBaseOn(next);
+    if (!ctx.activeCharId) return;
+    try { const d = await window.api.emotionBaseEnable(ctx.activeCharId, next); if (d.emotions) setBaseOn(d.emotions.base.enabled); } catch (e) { /* ignore */ }
+  }
   const [baseCheck, setBaseCheck] = useS2(null);
   async function doCheckBase() {
     if (!ctx.activeCharId) { setBaseCheck({ reasoning: "Проверка работает на сервере.", newPrompt: "" }); return; }
@@ -557,7 +587,7 @@ function ScreenEmotions({ ctx }) {
 
       <AdvancedScene value="Front facing portrait, head and shoulders, plain neutral grey background, soft even lighting." note={<>Кадры эмоций — крупный <b>портрет</b> (голова и плечи), одна и та же сцена на все три. Меняйте это поле <b>только</b> чтобы поправить план или ракурс (например, если лицо слишком мелкое). Фон и свет лучше не трогать.</>} />
 
-      <Panel title="Эмоция по умолчанию" icon="🎯" badge={<span className="badge opt">по желанию</span>} actions={<Toggle on={baseOn} onToggle={setBaseOn} />}>
+      <Panel title="Эмоция по умолчанию" icon="🎯" badge={<span className="badge opt">по желанию</span>} actions={<Toggle on={baseOn} onToggle={toggleBase} />}>
         <div style={{ opacity: baseOn ? 1 : 0.45, pointerEvents: baseOn ? "auto" : "none" }}>
           <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>«Обычное» выражение героя — будет подставляться во всех сценах вместо нейтрального.</p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 170px", gap: 16, alignItems: "start" }}>
