@@ -31,10 +31,10 @@ Design rules carried over from the Gradio layer:
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import secrets
+import shutil
 import tempfile
 import zipfile
 from pathlib import Path
@@ -54,6 +54,8 @@ from create_char_passport.state import (
     CharacterState,
     CostLedger,
     OutfitEntry,
+    PropEntry,
+    PropShot,
     emotion_step,
     normalize_character_table,
     outfit_detail_step,
@@ -565,29 +567,50 @@ def _build_archive(state: CharacterState) -> Path:
     return Path(tmp.name)
 
 
-def _serve_image(path: Path, width: int | None) -> Response:
-    """Serve an image, optionally downscaled to ``width`` px for fast review grids.
+# Reads from the HF Storage Bucket (Xet FUSE) are slow (a full 775 KB image took
+# ~12s on prod), so each bucket file is copied to a local cache the first time it
+# is served and everything after — thumbnails *and* the lightbox original — comes
+# from local disk. Cache key includes mtime+size, so a regenerated frame refreshes.
+_IMG_CACHE = Path(tempfile.gettempdir()) / "cph_imgcache"
+_CACHE_HEADERS = {"Cache-Control": "public, max-age=86400"}
 
-    The stored refs/frames are full-size (hundreds of KB to a couple of MB);
-    review thumbnails only need a few hundred px. With ``width`` we return a small
-    cached JPEG; without it (or if the file isn't a decodable image) we stream the
-    original file unchanged.
-    """
-    if width and 0 < width <= 2048:
+
+def _local_image(path: Path) -> Path:
+    """Local cached copy of a bucket image (copied once); the bucket path on error."""
+    _IMG_CACHE.mkdir(parents=True, exist_ok=True)
+    try:
+        stat = path.stat()
+        local = _IMG_CACHE / f"{path.stem}_{int(stat.st_mtime)}_{stat.st_size}{path.suffix}"
+    except OSError:
+        return path
+    if not local.exists():
         try:
-            with Image.open(path) as im:
-                im = im.convert("RGB")
-                im.thumbnail((width, width))
-                buf = io.BytesIO()
-                im.save(buf, format="JPEG", quality=82)
-            return Response(
-                content=buf.getvalue(),
-                media_type="image/jpeg",
-                headers={"Cache-Control": "public, max-age=86400"},
-            )
-        except (OSError, ValueError):
-            pass  # not a decodable image — fall through to the raw file
-    return FileResponse(str(path))
+            shutil.copyfile(path, local)
+        except OSError:
+            return path
+    return local
+
+
+def _serve_image(path: Path, width: int | None) -> Response:
+    """Serve an image (locally cached), optionally downscaled to ``width`` px.
+
+    The stored refs/frames are full-size; review grids only need a few hundred px.
+    With ``width`` we return a small cached JPEG; without it the (cached) original.
+    A non-decodable file falls back to streaming the raw bytes.
+    """
+    local = _local_image(path)
+    if width and 0 < width <= 2048:
+        thumb = _IMG_CACHE / f"{local.stem}_{width}.jpg"
+        if not thumb.exists():
+            try:
+                with Image.open(local) as im:
+                    im = im.convert("RGB")
+                    im.thumbnail((width, width))
+                    im.save(thumb, format="JPEG", quality=82)
+            except (OSError, ValueError):
+                return FileResponse(str(local))
+        return FileResponse(str(thumb), media_type="image/jpeg", headers=_CACHE_HEADERS)
+    return FileResponse(str(local), headers=_CACHE_HEADERS)
 
 
 def _load_for_session(sess: WizardSession, character_id: str) -> CharacterState | None:
@@ -1105,6 +1128,20 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         if state is None:
             raise HTTPException(status_code=404, detail="character not found")
         set_props_enabled(state, body.enabled)
+        save_state(state)
+        return {"props": _props_payload(state)}
+
+    @app.post("/api/character/{character_id}/props/add")
+    def props_add(request: Request, response: Response, character_id: str) -> dict[str, Any]:
+        """Append a new (empty, 1-shot) prop so the user can build it here."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        state.props_enabled = True
+        used = [int(p.id) for p in state.props if p.id.isdigit()]
+        new_id = str(max(used, default=0) + 1)
+        state.props.append(PropEntry(id=new_id, shots=[PropShot()]))
         save_state(state)
         return {"props": _props_payload(state)}
 

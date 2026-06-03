@@ -163,6 +163,9 @@
         body: JSON.stringify({ enabled: enabled }),
       });
     },
+    propAdd(id) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/props/add", { method: "POST" });
+    },
     propShot(id, action, payload) {
       return jsonFetch("/api/character/" + encodeURIComponent(id) + "/props/shot/" + action, {
         method: "POST",

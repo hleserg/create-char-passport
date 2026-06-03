@@ -227,7 +227,7 @@ function ScreenPassport({ ctx }) {
   }, [pp, step]);
 
   async function doGen() {
-    if (window.__bumpCost) window.__bumpCost(8);
+    if (window.__bumpCost) window.__bumpCost(0.04);
     if (!ctx.activeCharId) { setGen("gen"); await new Promise((r) => setTimeout(r, 1100)); setGen("ready"); return; }
     const regenerate = gen === "ready";
     setGen("gen"); setErr(null);
@@ -374,7 +374,7 @@ function EmotionCell({ item, id, onUpdate }) {
   const [v, setV] = useS2(0);
   React.useEffect(() => { setSt(item.has_image ? "ready" : "empty"); }, [item.has_image]);
   async function gen() {
-    if (window.__bumpCost) window.__bumpCost(8);
+    if (window.__bumpCost) window.__bumpCost(0.04);
     if (!id) { setSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setSt("ready"); return; }
     setSt("gen");
     try {
@@ -438,7 +438,7 @@ function ScreenEmotions({ ctx }) {
   }, [ctx.activeCharId]);
 
   async function genBase() {
-    if (window.__bumpCost) window.__bumpCost(8);
+    if (window.__bumpCost) window.__bumpCost(0.04);
     genBaseDebug();
     if (!ctx.activeCharId) { setBaseSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setBaseSt("ready"); return; }
     setBaseSt("gen");

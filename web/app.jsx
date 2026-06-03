@@ -56,10 +56,16 @@ function App() {
   const [variant, setVariant] = useStateApp("A"); // passport layout variant
   const [activeChar, setActiveChar] = useStateApp("Герон");
   const [activeCharId, setActiveCharId] = useStateApp(null);
-  const [cost, setCost] = useStateApp(0);
+  const [cost, setCost] = useStateApp(0); // running session cost, USD
   const [lightbox, setLightbox] = useStateApp(null);
-  window.__bumpCost = (n) => setCost((c) => c + n);
+  window.__bumpCost = (n) => setCost((c) => c + n); // optimistic USD bump
+  window.__setCost = (usd) => { if (typeof usd === "number" && !isNaN(usd)) setCost(usd); };
   window.__lightbox = (url) => setLightbox(url);
+
+  // Load the real accumulated session cost (USD) from the backend on start.
+  React.useEffect(() => {
+    window.api.session().then((d) => d && d.cost && window.__setCost(d.cost.total_usd)).catch(() => {});
+  }, []);
 
   const frozen = {
     style: phase !== "start",
@@ -106,9 +112,9 @@ function App() {
           </div>
         </div>
         <div className="spacer"></div>
-        <div className="cost-tag" title="Сумма платных запросов к ИИ за эту сессию (генерация картинок и подсказки ИИ)">
-          <span className="coin">₽</span>
-          <span>Сессия: <b>≈ {Math.round(cost)} ₽</b></span>
+        <div className="cost-tag" title="Оценка стоимости платных запросов к ИИ за эту сессию в долларах США (по прайсу моделей)">
+          <span className="coin">$</span>
+          <span>Сессия: <b>≈ ${cost.toFixed(2)}</b></span>
         </div>
         {phase !== "start" && (
           <div className="who">
