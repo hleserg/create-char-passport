@@ -127,7 +127,7 @@ function VariantSwitcher({ ctx }) {
 }
 
 /* layer field block for a passport frame */
-function PassportFields({ frame, step }) {
+function PassportFields({ frame, step, face, body, outfit, setFace, setBody, setOutfit }) {
   const faceRO = step >= 1;
   const bodyRO = step >= 2;
   const showBody = step >= 1;
@@ -138,21 +138,21 @@ function PassportFields({ frame, step }) {
       <Field ru="Лицо" en="FACE"
         right={faceRO ? <span className="badge lock">🔒 заморожено</span> : <span className="badge ro">собрано из анкеты</span>}
         hint={!faceRO ? <DoDont yes="форма лица, нос, губы, глаза, волосы, кожа, шрамы" no="выражение/эмоцию (это слой «Эмоция»), позу и фон, одежду" /> : null}>
-        <PromptField readOnly={faceRO} rows={2} layer="Лицо" value="coarse face, broad nose, full lips, deep-set dark eyes, short rough dark hair, weathered tanned skin" />
+        <PromptField readOnly={faceRO} rows={2} layer="Лицо" value={face} onChange={setFace} />
       </Field>
 
       {showBody && (
         <Field ru="Тело" en="BODY"
           right={bodyRO ? <span className="badge lock">🔒 заморожено</span> : <span className="badge ro">собрано из анкеты</span>}
           hint={!bodyRO ? <DoDont yes="телосложение, рост (словами: «коренастый»), приметы на теле" no="одежду, лицо, позу или настроение" /> : null}>
-          <PromptField readOnly={bodyRO} rows={2} layer="Тело" value="stocky, powerfully built, broad shoulders, faded tattoo on left forearm" />
+          <PromptField readOnly={bodyRO} rows={2} layer="Тело" value={body} onChange={setBody} />
         </Field>
       )}
 
       <Field ru="Одежда" en="OUTFIT"
         right={outfitRO ? <span className="badge ro">по базовому наряду</span> : <span className="badge now">базовый наряд — вводим тут</span>}
         hint={!outfitRO ? <DoDont yes="одежду, материал, крой, цвет наряда" no="телосложение, лицо, позу/фон, эмоцию" /> : null}>
-        <PromptField readOnly={outfitRO} rows={1} layer="Одежда" value="dark fur-trimmed leather tunic, wide leather belt" />
+        <PromptField readOnly={outfitRO} rows={1} layer="Одежда" value={outfit} onChange={setOutfit} />
       </Field>
 
       {/* Одна общая проверка: разом проверяет все заполняемые поля этого кадра */}
@@ -172,18 +172,14 @@ function PassportFields({ frame, step }) {
   );
 }
 
-function PassportActions({ ctx, step, onEdit }) {
+function PassportActions({ ctx, step, onEdit, onApprove }) {
   const isLast = step >= FRAMES.length - 1;
   return (
     <div className="btnrow split">
       <button className="btn ghost" onClick={() => step > 0 ? ctx.setPStep(step - 1) : ctx.go("data")}>← Назад</button>
       <div className="btnrow">
         <AIButton onClick={onEdit}>Правка с ИИ</AIButton>
-        <button className="btn approve" onClick={() => {
-          if (isLast) ctx.go("emotions");
-          else ctx.setPStep(step + 1);
-          window.scrollTo({ top: 0 });
-        }}>{isLast ? "Готово, дальше →" : "Утвердить кадр →"}</button>
+        <button className="btn approve" onClick={onApprove}>{isLast ? "Готово, дальше →" : "Утвердить кадр →"}</button>
       </div>
     </div>
   );
@@ -192,47 +188,90 @@ function PassportActions({ ctx, step, onEdit }) {
 function ScreenPassport({ ctx }) {
   const step = ctx.pStep;
   const frame = FRAMES[step];
-  const [gen, setGen] = useS2("ready"); // empty | gen | ready
+  const [pp, setPp] = useS2(null);
+  const [face, setFace] = useS2("");
+  const [body, setBody] = useS2("");
+  const [outfit, setOutfit] = useS2("");
+  const [gen, setGen] = useS2("empty"); // empty | gen | ready
+  const [imgV, setImgV] = useS2(0);
+  const [err, setErr] = useS2(null);
   const [edit, setEdit] = useS2(false);
 
-  function doGen() {
-    if (window.__bumpCost) window.__bumpCost(8);
-    // record exact prompt sent for the debug viewer
-    const FACE = "coarse face, broad nose, full lips, deep-set dark eyes, short rough dark hair, weathered tanned skin";
-    const BODY = "stocky, powerfully built, broad shoulders, faded tattoo on left forearm";
-    const layers = { style: "graphic novel, bold ink linework, muted watercolour wash, dramatic chiaroscuro lighting" };
-    if (["face", "profile", "3q"].includes(frame.key) || step >= 0) layers.face = FACE;
-    if (step >= 1 || ["body", "back", "3q"].includes(frame.key)) layers.body = BODY;
-    if (["face", "body"].includes(frame.key)) layers.outfit = "dark fur-trimmed leather tunic, wide leather belt";
-    layers.composition = FRAME_COMP[frame.key];
-    let refs;
-    if (frame.key === "face") {
-      // первый портрет: три стиль-рефа, лица/тела ещё нет
-      refs = [
-        { label: "стиль-реф 1", kind: "item", take: "use STYLE only — drawing manner, do not copy any character" },
-        { label: "стиль-реф 2", kind: "item", take: "use STYLE only — drawing manner, do not copy any character" },
-        { label: "стиль-реф 3", kind: "item", take: "use STYLE only — drawing manner, do not copy any character" },
-      ];
-    } else {
-      refs = [{ label: "стиль-реф", kind: "item" }];
-      refs.push({ label: "паспорт: фас-портрет (FACE)", kind: "front-portrait" });
-      if (["profile", "back", "3q"].includes(frame.key)) refs.push({ label: "паспорт: фас, рост (BODY)", kind: "front-full" });
+  const serverKey = "passport_" + frame.key;
+  const SAMPLE = {
+    face: "coarse face, broad nose, full lips, deep-set dark eyes, short rough dark hair, weathered tanned skin",
+    body: "stocky, powerfully built, broad shoulders, faded tattoo on left forearm",
+    outfit: "dark fur-trimmed leather tunic, wide leather belt",
+  };
+
+  // Load the passport phase from the backend (sample defaults with no backend).
+  React.useEffect(() => {
+    if (!ctx.activeCharId) {
+      setFace(SAMPLE.face); setBody(SAMPLE.body); setOutfit(SAMPLE.outfit); setGen("ready");
+      return;
     }
-    if (window.setLastGen) window.setLastGen({ section: "Паспорт", view: frame.title, layers,
-      refs, model: "nano-banana", size: "1024×1536" });
-    setGen("gen"); setTimeout(() => setGen("ready"), 1100);
+    let alive = true;
+    window.api.getPassport(ctx.activeCharId)
+      .then((d) => { if (alive && d && d.passport) setPp(d.passport); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [ctx.activeCharId]);
+
+  // Seed editable layer values + preview state from the active frame.
+  React.useEffect(() => {
+    if (!pp || !pp.frames[step]) return;
+    const f = pp.frames[step];
+    setFace(f.face || ""); setBody(f.body || ""); setOutfit(f.outfit || "");
+    setGen(f.has_image ? "ready" : "empty");
+    setErr(null);
+  }, [pp, step]);
+
+  async function doGen() {
+    if (window.__bumpCost) window.__bumpCost(8);
+    if (!ctx.activeCharId) { setGen("gen"); await new Promise((r) => setTimeout(r, 1100)); setGen("ready"); return; }
+    const regenerate = gen === "ready";
+    setGen("gen"); setErr(null);
+    try {
+      const d = await window.api.passportGenerate(ctx.activeCharId, { step_key: serverKey, face, body, outfit, regenerate });
+      if (d.passport) setPp(d.passport);
+      setImgV((v) => v + 1);
+      setGen(d.ok ? "ready" : "empty");
+      if (!d.ok) setErr(d.error || "Не удалось сгенерировать кадр");
+    } catch (e) { setGen("empty"); setErr("Ошибка сети — попробуйте ещё раз"); }
   }
 
-  // reset preview state when step changes is omitted for demo simplicity
+  async function approveAndNext() {
+    const isLast = step >= FRAMES.length - 1;
+    if (ctx.activeCharId && gen === "ready") {
+      try {
+        const d = await window.api.passportApprove(ctx.activeCharId, serverKey);
+        if (d.passport) setPp(d.passport);
+      } catch (e) { /* navigate anyway */ }
+    }
+    if (isLast) ctx.go("emotions"); else ctx.setPStep(step + 1);
+    window.scrollTo({ top: 0 });
+  }
+
+  const imgSrc = ctx.activeCharId ? window.api.imageUrl(ctx.activeCharId, serverKey, imgV) : null;
+  const imgStyle = { maxWidth: "100%", maxHeight: ctx.variant === "C" ? 340 : 210, borderRadius: 6, objectFit: "contain" };
 
   const previewBlock = (
     <Panel className={ctx.variant === "C" ? "" : "soft"} marks={ctx.variant === "C"}>
       <div className="pv-title">Кадр {frame.n} · {frame.title}</div>
       <div className={"pv " + (gen === "ready" ? "ready" : gen === "gen" ? "gen" : "empty")} style={{ minHeight: ctx.variant === "C" ? 360 : 230 }}>
         {gen === "gen" ? (<><div className="pv-spin"></div><span className="pv-cap">генерация…</span></>)
-          : gen === "ready" ? (<><span className="pv-badge"><span className="badge done">✓ кадр готов</span></span><Figure kind={frame.fig} size={ctx.variant === "C" ? 130 : 92} /><span className="pv-cap">{frame.title}</span><span className="pv-sub">нейтральное лицо · серый фон</span></>)
+          : gen === "ready" ? (
+            <>
+              <span className="pv-badge"><span className="badge done">✓ кадр готов</span></span>
+              {imgSrc
+                ? <img src={imgSrc} alt={frame.title} style={imgStyle} onError={(e) => { e.target.style.display = "none"; }} />
+                : <Figure kind={frame.fig} size={ctx.variant === "C" ? 130 : 92} />}
+              <span className="pv-cap">{frame.title}</span>
+              <span className="pv-sub">нейтральное лицо · серый фон</span>
+            </>)
             : (<><Figure kind={frame.fig} size={92} /><span className="pv-cap">нажмите «Сгенерировать»</span></>)}
       </div>
+      {err && <div className="notice red" style={{ marginTop: 10 }}><span className="ic">⚠️</span><span className="tx">{err}</span></div>}
       <div className="btnrow" style={{ marginTop: 12 }}>
         <button className="btn primary" onClick={doGen}>{gen === "ready" ? "↻ Перегенерировать" : "Сгенерировать кадр"}</button>
         <AIButton onClick={() => {}}>Проверить кадр с ИИ</AIButton>
@@ -245,7 +284,7 @@ function ScreenPassport({ ctx }) {
     <Panel key={"fields-" + frame.key} title="Описание кадра" icon="✍️" marks={ctx.variant !== "B"}
       collapsible={step >= 2} defaultCollapsed={step >= 2}
       badge={step >= 2 ? <span className="badge lock">🔒 всё заморожено</span> : null}>
-      <PassportFields frame={frame} step={step} />
+      <PassportFields frame={frame} step={step} face={face} body={body} outfit={outfit} setFace={setFace} setBody={setBody} setOutfit={setOutfit} />
     </Panel>
   );
 
@@ -303,7 +342,7 @@ function ScreenPassport({ ctx }) {
       {ctx.variant === "C" && (<>{previewBlock}{sceneBlock}{fieldsBlock}</>)}
 
       <div style={{ marginTop: 22 }}>
-        <PassportActions ctx={ctx} step={step} onEdit={() => setEdit(true)} />
+        <PassportActions ctx={ctx} step={step} onEdit={() => setEdit(true)} onApprove={approveAndNext} />
       </div>
 
       {edit && <AIEditDialog onClose={() => setEdit(false)} />}
