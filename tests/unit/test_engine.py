@@ -102,6 +102,34 @@ def test_generate_image_writes_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert result.image_bytes == b"png-bytes"  # carried for the web serve cache
 
 
+def test_generate_image_sets_aspect_ratio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    response = FakeResponse(
+        candidates=[
+            FakeCandidate(content=FakeContent(parts=[FakePart(inline_data=FakeInline(data=b"x"))]))
+        ]
+    )
+    client = _patch_client(monkeypatch, response)
+    generate_image(
+        prompt_layers={"style": "x"}, refs=[], output_path=tmp_path / "o.png", aspect_ratio="1:1"
+    )
+    config = client.models.calls[0]["config"]
+    assert config.image_config is not None
+    assert config.image_config.aspect_ratio == "1:1"
+
+
+def test_generate_image_no_aspect_ratio_leaves_image_config_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    response = FakeResponse(
+        candidates=[
+            FakeCandidate(content=FakeContent(parts=[FakePart(inline_data=FakeInline(data=b"x"))]))
+        ]
+    )
+    client = _patch_client(monkeypatch, response)
+    generate_image(prompt_layers={}, refs=[], output_path=tmp_path / "o.png")
+    assert client.models.calls[0]["config"].image_config is None
+
+
 def test_generate_image_decodes_base64_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

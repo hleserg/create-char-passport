@@ -431,14 +431,18 @@ def test_ai_check_edit_404(client: TestClient) -> None:
 # --------------------------------------------------------------------------- #
 # passport: serialize / generate / approve / image
 # --------------------------------------------------------------------------- #
-def _fake_gen_ok(layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
+def _fake_gen_ok(
+    layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None, aspect_ratio=None
+):
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_bytes(b"img-bytes")
     # Mirror the real engine: carry the bytes so the serve cache can populate.
     return GenerationResult(image_path=str(output_path), ok=True, image_bytes=b"img-bytes")
 
 
-def _fake_gen_fail(layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
+def _fake_gen_fail(
+    layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None, aspect_ratio=None
+):
     return GenerationResult(image_path=None, ok=False, error="boom")
 
 

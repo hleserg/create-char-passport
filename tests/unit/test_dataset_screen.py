@@ -31,7 +31,16 @@ def bucket(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     yield tmp_path
 
 
-def _fake_ok(prompt_layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
+def _fake_ok(
+    prompt_layers,
+    refs,
+    outfit_conflict=False,
+    *,
+    output_path,
+    model=None,
+    meter=None,
+    aspect_ratio=None,
+):
     Path(output_path).write_bytes(b"img")
     if meter is not None:
         meter.image_usd += 0.05
@@ -39,7 +48,16 @@ def _fake_ok(prompt_layers, refs, outfit_conflict=False, *, output_path, model=N
     return GenerationResult(image_path=str(output_path), ok=True)
 
 
-def _fake_fail(prompt_layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
+def _fake_fail(
+    prompt_layers,
+    refs,
+    outfit_conflict=False,
+    *,
+    output_path,
+    model=None,
+    meter=None,
+    aspect_ratio=None,
+):
     return GenerationResult(image_path=None, ok=False, error="boom — retry")
 
 

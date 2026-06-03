@@ -71,6 +71,7 @@ def render_step_image(
     meter: CostLedger | None = None,
     model: str | None = None,
     outfit_conflict: bool = False,
+    aspect_ratio: str | None = None,
 ) -> tuple[GenerationResult, str | None]:
     """Render ``step_key`` to ``refs/<step_key>.png`` with the robust pending flow.
 
@@ -78,6 +79,8 @@ def render_step_image(
     and the previous frame (if any) is untouched. On success the previous frame
     is archived to ``rejected/`` and the new one is moved into place; the returned
     relative path is what callers store in state (e.g. ``items[].ref``).
+    ``aspect_ratio`` shapes the output (e.g. ``"1:1"`` for emotion portraits) so
+    the frame is not padded with grey side-bars.
     """
     char_dir = character_dir(state.character_id)
     out = char_dir / REFS_DIR / f"{step_key}.png"
@@ -89,6 +92,7 @@ def render_step_image(
         output_path=pending,
         model=model,
         meter=meter,
+        aspect_ratio=aspect_ratio,
     )
     if not result.ok:
         pending.unlink(missing_ok=True)

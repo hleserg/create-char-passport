@@ -30,6 +30,7 @@ from create_char_passport.gen import (
     GenerationResult,
     Ref,
     SceneId,
+    aspect_for_scene,
     build_prompt_layers,
     effective_composition,
 )
@@ -123,6 +124,7 @@ def generate_outfit_scene(
         meter=meter,
         model=model,
         outfit_conflict=True,
+        aspect_ratio=aspect_for_scene(scene_id),  # full-length scenes are tall (2:3)
     )
     if result.ok:
         setattr(outfit.refs, attr, relative)
@@ -192,6 +194,7 @@ def generate_outfit_detail(
         meter=meter,
         model=model,
         outfit_conflict=False,
+        aspect_ratio=aspect_for_scene(SceneId.DETAIL_CLOSEUP),  # square close-up
     )
     if result.ok:
         outfit.details[n - 1].ref = relative

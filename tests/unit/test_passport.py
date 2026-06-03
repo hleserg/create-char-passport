@@ -30,7 +30,16 @@ def _approved(state: object, step_key: str) -> None:
 
 
 def _fake_ok(written: list[Path]):
-    def fake(prompt_layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
+    def fake(
+        prompt_layers,
+        refs,
+        outfit_conflict=False,
+        *,
+        output_path,
+        model=None,
+        meter=None,
+        aspect_ratio=None,
+    ):
         Path(output_path).write_bytes(b"new-image")
         written.append(Path(output_path))
         if meter is not None:
@@ -41,7 +50,16 @@ def _fake_ok(written: list[Path]):
     return fake
 
 
-def _fake_fail(prompt_layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
+def _fake_fail(
+    prompt_layers,
+    refs,
+    outfit_conflict=False,
+    *,
+    output_path,
+    model=None,
+    meter=None,
+    aspect_ratio=None,
+):
     return GenerationResult(image_path=None, ok=False, error="boom — retry")
 
 
