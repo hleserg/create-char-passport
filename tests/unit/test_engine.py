@@ -99,6 +99,7 @@ def test_generate_image_writes_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert result.ok is True
     assert result.image_path == str(out)
     assert out.read_bytes() == b"png-bytes"
+    assert result.image_bytes == b"png-bytes"  # carried for the web serve cache
 
 
 def test_generate_image_decodes_base64_data(

@@ -32,8 +32,15 @@ from create_char_passport.wizard import ExtractedCharacter
 
 @pytest.fixture
 def bucket(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Point the storage bucket at a throwaway dir for the duration of a test."""
+    """Point the storage bucket at a throwaway dir for the duration of a test.
+
+    Also isolates the process-global image/serve caches into the same throwaway
+    dir, so the stable-keyed serve cache (``{cid}__{step}.png``) can't leak a
+    generated frame from one test into another that reuses the same character id.
+    """
     monkeypatch.setenv("APP_BUCKET_PATH", str(tmp_path))
+    monkeypatch.setattr(webapp, "_IMG_CACHE", tmp_path / "_imgcache")
+    monkeypatch.setattr(webapp, "_SERVE_CACHE", tmp_path / "_imgcache" / "serve")
     get_settings.cache_clear()
     yield tmp_path
     get_settings.cache_clear()
@@ -85,6 +92,25 @@ def test_session_sets_cookie_then_reuses_it(client: TestClient) -> None:
     # The TestClient keeps the cookie, so a second call resolves the same session.
     again = client.get("/api/session")
     assert again.status_code == 200
+
+
+def test_session_cookie_samesite_none_secure_over_https(client: TestClient) -> None:
+    # Behind the HF proxy (X-Forwarded-Proto: https) the cookie MUST be
+    # SameSite=None; Secure, or it is dropped in the huggingface.co iframe and the
+    # whole session silently breaks (drafts lost, /api/character 404s).
+    res = client.get("/api/session", headers={"x-forwarded-proto": "https"})
+    setc = res.headers.get("set-cookie", "").lower()
+    assert "cph_session=" in setc
+    assert "samesite=none" in setc
+    assert "secure" in setc
+
+
+def test_session_cookie_lax_over_plain_http(client: TestClient) -> None:
+    # Plain HTTP (local dev): Secure cookies are not stored, so fall back to Lax.
+    res = client.get("/api/session")
+    setc = res.headers.get("set-cookie", "").lower()
+    assert "samesite=lax" in setc
+    assert "secure" not in setc
 
 
 def test_session_lists_saved_characters(client: TestClient, bucket: Path) -> None:
@@ -224,6 +250,28 @@ def test_create_character_persists_and_serialises(
     assert body["card"]["gender"] == "male"
     assert body["phase"] == "data"
     assert client.get("/api/character/geron").status_code == 200  # persisted
+
+
+def test_create_character_from_posted_draft_without_session(
+    client: TestClient, bucket: Path
+) -> None:
+    # No prior /api/extract — the SPA posts the whole draft, so creation must not
+    # depend on the server session (the cross-site-iframe dropped-cookie case).
+    res = client.post(
+        "/api/character",
+        json={
+            "name": "Тайра",
+            "table": {"gender": "female", "age": "25"},
+            "face": "sharp features",
+            "body": "lithe",
+            "outfit": "leather armor",
+        },
+    )
+    assert res.status_code == 200
+    char = res.json()["character"]
+    assert char["id"] == "tayra"
+    assert char["card"]["gender"] == "female"
+    assert client.get("/api/character/tayra").status_code == 200  # persisted
 
 
 def test_create_character_id_collision_does_not_overwrite(
@@ -386,7 +434,8 @@ def test_ai_check_edit_404(client: TestClient) -> None:
 def _fake_gen_ok(layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_bytes(b"img-bytes")
-    return GenerationResult(image_path=str(output_path), ok=True)
+    # Mirror the real engine: carry the bytes so the serve cache can populate.
+    return GenerationResult(image_path=str(output_path), ok=True, image_bytes=b"img-bytes")
 
 
 def _fake_gen_fail(layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
@@ -779,6 +828,114 @@ def test_archive_download(client: TestClient, bucket: Path) -> None:
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/zip"
     assert res.content[:2] == b"PK"  # zip magic
+
+
+def test_generate_populates_serve_cache_and_serves_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    monkeypatch.setattr("create_char_passport.wizard.passport.generate_image", _fake_gen_ok)
+    client.post(f"/api/character/{cid}/passport/generate", json={"step_key": "passport_face"})
+    # the fresh frame's bytes are written straight to the local serve cache (no
+    # bucket read needed to serve it)
+    assert webapp._serve_cache_path(cid, "passport_face").is_file()
+    assert client.get(f"/api/character/{cid}/image/passport_face").status_code == 200
+
+
+def test_extract_file_txt_and_docx(client: TestClient) -> None:
+    # plain text (UTF-8)
+    res = client.post(
+        "/api/extract/file",
+        files={"file": ("story.txt", "Жил-был Герон.".encode(), "text/plain")},
+    )
+    assert res.status_code == 200
+    assert "Герон" in res.json()["text"]
+    # a minimal .docx (zip of word/document.xml)
+    buf = io.BytesIO()
+    import zipfile
+
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(
+            "word/document.xml",
+            "<w:document><w:body><w:p><w:r><w:t>Привет мир</w:t></w:r></w:p></w:body></w:document>",
+        )
+    res2 = client.post(
+        "/api/extract/file",
+        files={"file": ("story.docx", buf.getvalue(), "application/octet-stream")},
+    )
+    assert res2.status_code == 200
+    assert "Привет мир" in res2.json()["text"]
+
+
+def test_extract_file_unreadable_422(client: TestClient) -> None:
+    res = client.post(
+        "/api/extract/file",
+        files={"file": ("broken.docx", b"not a zip at all", "application/octet-stream")},
+    )
+    assert res.status_code == 422
+
+
+def test_extract_file_fb2_strips_binary_keeps_body(client: TestClient) -> None:
+    fb2 = (
+        '<?xml version="1.0" encoding="utf-8"?><FictionBook>'
+        "<description><title-info><book-title>Тест</book-title></title-info></description>"
+        "<body><section><p>Герон вышел из таверны.</p></section></body>"
+        '<binary id="c.jpg" content-type="image/jpeg">QUJDREVGRw==</binary>'
+        "</FictionBook>"
+    ).encode()
+    res = client.post(
+        "/api/extract/file", files={"file": ("book.fb2", fb2, "application/octet-stream")}
+    )
+    assert res.status_code == 200
+    text = res.json()["text"]
+    assert "Герон вышел из таверны" in text
+    assert "QUJDREVG" not in text  # embedded base64 image stripped
+
+
+def test_extract_file_fb2_windows1251(client: TestClient) -> None:
+    # Many Russian .fb2 are windows-1251; the server must decode them correctly.
+    fb2 = (
+        '<?xml version="1.0" encoding="windows-1251"?><FictionBook>'
+        "<body><section><p>Граф Орлов вышел из кареты.</p></section></body>"
+        "</FictionBook>"
+    ).encode("cp1251")
+    res = client.post(
+        "/api/extract/file", files={"file": ("кн.fb2", fb2, "application/octet-stream")}
+    )
+    assert res.status_code == 200
+    assert "Граф Орлов вышел из кареты" in res.json()["text"]  # decoded, not mojibake
+
+
+def test_extract_file_large_book_freezes_and_extract_reads_stored(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    big = "Граф Орлов стоял у окна. " * 1000  # > _STORY_FREEZE_CHARS
+    res = client.post(
+        "/api/extract/file", files={"file": ("novel.txt", big.encode(), "text/plain")}
+    ).json()
+    assert res["frozen"] is True
+    assert res["text"] == ""  # a big book is never echoed back to the SPA
+    assert res["chars"] > webapp._STORY_FREEZE_CHARS
+
+    seen: dict[str, str] = {}
+
+    def fake_extract(text: str, *, model: str | None = None, meter: CostLedger | None = None):
+        seen["text"] = text
+        return [ExtractedCharacter(name="Граф Орлов")]
+
+    monkeypatch.setattr(webapp, "extract_characters", fake_extract)
+    # «Найти героев» with from_upload reads the server-held book, not the (empty) field
+    out = client.post("/api/extract", json={"text": "", "from_upload": True}).json()
+    assert [c["name"] for c in out["characters"]] == ["Граф Орлов"]
+    assert "Граф Орлов" in seen["text"]
+
+
+def test_extract_file_unsupported_format_415(client: TestClient) -> None:
+    res = client.post(
+        "/api/extract/file",
+        files={"file": ("book.mobi", b"binary junk", "application/octet-stream")},
+    )
+    assert res.status_code == 415
 
 
 def test_archive_approved_holds_only_golden_frames(

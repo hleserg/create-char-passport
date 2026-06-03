@@ -53,9 +53,24 @@
     styleRefUrl(key, w) {
       return "/api/style/ref/" + encodeURIComponent(key) + (w ? "?w=" + w : "");
     },
-    /* paste a story -> extracted character drafts ({characters, cost}) */
-    extract(text) {
-      return jsonFetch("/api/extract", { method: "POST", body: JSON.stringify({ text: text }) });
+    /* paste a story -> extracted character drafts ({characters, cost}). When
+       fromUpload is true the server extracts from the uploaded book it holds
+       (a big book that froze the textarea), ignoring `text`. */
+    extract(text, fromUpload) {
+      return jsonFetch("/api/extract", {
+        method: "POST",
+        body: JSON.stringify({ text: text, from_upload: !!fromUpload }),
+      });
+    },
+    /* upload a story FILE (.txt/.md/.docx, multipart) -> plain text ({text}) */
+    extractFile(file) {
+      const fd = new FormData();
+      fd.append("file", file);
+      return fetch("/api/extract/file", { method: "POST", credentials: "same-origin", body: fd })
+        .then((r) => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        });
     },
     /* RU description -> EN layer prompt (+ other-layer suggestions). When
        `current` is a non-empty existing prompt, `text` is applied as a change
@@ -66,9 +81,18 @@
         body: JSON.stringify({ text: text, layer: layer, current: current || "" }),
       });
     },
-    /* pick an extracted draft -> create + persist the character ({character}) */
-    createCharacter(name) {
-      return jsonFetch("/api/character", { method: "POST", body: JSON.stringify({ name: name }) });
+    /* pick an extracted draft -> create + persist the character ({character}).
+       Sends the WHOLE draft (table/face/body/outfit) so creation does not depend
+       on the server session (a cross-site iframe may drop the session cookie).
+       Accepts a draft object or a bare name (back-compat). */
+    createCharacter(draft) {
+      const d = typeof draft === "string" ? { name: draft } : draft || {};
+      return jsonFetch("/api/character", {
+        method: "POST",
+        body: JSON.stringify({
+          name: d.name, table: d.table || {}, face: d.face || "", body: d.body || "", outfit: d.outfit || "",
+        }),
+      });
     },
     /* load a character (resume / open saved) -> ({character}) */
     getCharacter(id) {
