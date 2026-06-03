@@ -388,6 +388,29 @@ def test_emotions_not_found_404(client: TestClient) -> None:
     assert client.get("/api/character/ghost/emotions").status_code == 404
 
 
+def test_emotions_enable_toggle(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    cid = _make_character(client, monkeypatch)
+    off = client.post(f"/api/character/{cid}/emotions/enable", json={"enabled": False}).json()
+    assert off["emotions"]["enabled"] is False
+    on = client.post(f"/api/character/{cid}/emotions/enable", json={"enabled": True}).json()
+    assert on["emotions"]["enabled"] is True
+
+
+def test_emotions_payload_has_neutral(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    cid = _make_character(client, monkeypatch)
+    neutral = client.get(f"/api/character/{cid}/emotions").json()["emotions"]["neutral"]
+    assert neutral["step_key"] == "passport_face"
+    assert neutral["has_image"] is False
+
+
+def test_outfits_add(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    cid = _make_character(client, monkeypatch)
+    before = client.get(f"/api/character/{cid}/outfits").json()["outfits"]["outfits"]
+    after = client.post(f"/api/character/{cid}/outfits/add").json()["outfits"]
+    assert after["enabled"] is True
+    assert len(after["outfits"]) == len(before) + 1
+
+
 # --------------------------------------------------------------------------- #
 # outfits: serialize / scene generate / complex / approve / details
 # --------------------------------------------------------------------------- #

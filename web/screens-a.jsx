@@ -157,7 +157,7 @@ function ScreenStart({ ctx }) {
                   {[0, 1, 2, 3, 4].map((i) => (
                     i < st.ref_count
                       ? <div className="pv ready" key={i} style={{ minHeight: 92 }}>
-                          {st.ref_keys[i] ? <img src={window.api.styleRefUrl(st.ref_keys[i], 240)} alt={"пример " + (i + 1)} style={{ maxWidth: "100%", maxHeight: 84, borderRadius: 6, objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} /> : <Figure kind="item" size={34} />}
+                          {st.ref_keys[i] ? <img src={window.api.styleRefUrl(st.ref_keys[i], 240)} alt={"пример " + (i + 1)} onClick={() => window.__lightbox(window.api.styleRefUrl(st.ref_keys[i]))} style={{ maxWidth: "100%", maxHeight: 84, borderRadius: 6, objectFit: "cover", cursor: "zoom-in" }} onError={(e) => { e.target.style.display = "none"; }} /> : <Figure kind="item" size={34} />}
                           <span className="pv-sub">пример {i + 1}</span>
                         </div>
                       : <label className="pv" key={i} style={{ minHeight: 92, cursor: styleBusy ? "wait" : "pointer", borderStyle: "dashed" }}>

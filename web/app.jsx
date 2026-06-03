@@ -57,7 +57,9 @@ function App() {
   const [activeChar, setActiveChar] = useStateApp("Герон");
   const [activeCharId, setActiveCharId] = useStateApp(null);
   const [cost, setCost] = useStateApp(0);
+  const [lightbox, setLightbox] = useStateApp(null);
   window.__bumpCost = (n) => setCost((c) => c + n);
+  window.__lightbox = (url) => setLightbox(url);
 
   const frozen = {
     style: phase !== "start",
@@ -130,6 +132,7 @@ function App() {
         {showRail && <LayerRail layers={layers} values={values} />}
       </div>
       <window.DebugLastPrompt />
+      {lightbox && <window.Lightbox url={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   );
 }

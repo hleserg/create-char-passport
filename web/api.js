@@ -97,6 +97,12 @@
         body: JSON.stringify({ index: index }),
       });
     },
+    emotionEnable(id, enabled) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/emotions/enable", {
+        method: "POST",
+        body: JSON.stringify({ enabled: enabled }),
+      });
+    },
     emotionBase(id, value) {
       return jsonFetch("/api/character/" + encodeURIComponent(id) + "/emotions/base", {
         method: "POST",
@@ -118,6 +124,9 @@
         method: "POST",
         body: JSON.stringify(payload),
       });
+    },
+    outfitAdd(id) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/outfits/add", { method: "POST" });
     },
     outfitComplex(id, index, complex) {
       return jsonFetch("/api/character/" + encodeURIComponent(id) + "/outfits/complex", {

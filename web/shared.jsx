@@ -603,10 +603,32 @@ function DebugLastPrompt() {
   );
 }
 
+/* =========================================================
+   LIGHTBOX — click a preview thumbnail to see the original.
+   Closes on ANY key or a click outside the image.
+   ========================================================= */
+function Lightbox({ url, onClose }) {
+  useEffect(() => {
+    const onKey = () => onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="overlay" onClick={onClose} style={{ cursor: "zoom-out", padding: 24 }}>
+      <img
+        src={url}
+        alt="оригинал"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: "92vw", maxHeight: "92vh", borderRadius: 8, boxShadow: "0 10px 50px rgba(0,0,0,.55)", cursor: "default" }}
+      />
+    </div>
+  );
+}
+
 /* export */
 Object.assign(window, {
   Figure, Ico, Stepper, PHASES, LayerRail, LAYER_DEFS, Panel, Help,
   Field, DoDont, PromptField, Preview, AIButton, Check, Toggle, Dialog,
   PresetPicker, EMOTION_PRESETS, TranslateDialog, AdvancedScene, SceneModal,
-  DebugLastPrompt, assembleFull,
+  DebugLastPrompt, assembleFull, Lightbox,
 });

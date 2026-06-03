@@ -19,6 +19,11 @@ function SceneCard({ id, index, scene, label, fig, req, getGen, onUpdate, regist
       setV((x) => x + 1);
       setSt(d.ok ? "ready" : "empty");
       onUpdate && d.outfits && onUpdate(d.outfits);
+      window.setLastGen({
+        section: "Наряд", view: label, model: "nano-banana", size: "1024×1536",
+        layers: { outfit: getGen ? getGen() : "", composition: "full-length character reference, " + (scene ? scene.scene.replace("_", " ") : "") + ", plain neutral grey background" },
+        refs: [{ label: "стиль-реф", kind: "item" }, { label: "паспорт: фас (FACE)", kind: "front-portrait" }, { label: "паспорт: рост (BODY)", kind: "front-full" }],
+      });
     } catch (e) { setSt("empty"); }
   }
   // expose gen() so the parent can "догенерить недостающие"
@@ -30,7 +35,7 @@ function SceneCard({ id, index, scene, label, fig, req, getGen, onUpdate, regist
       <div className="pv-title">{label}{req && <span style={{ color: "var(--red)" }}> *</span>}</div>
       <div className={"pv " + (st === "ready" ? "ready" : st === "gen" ? "gen" : "empty")} style={{ minHeight: 160 }}>
         {st === "gen" ? <div className="pv-spin"></div> :
-          st === "ready" ? <><span className="pv-badge"><span className="badge done">✓</span></span>{imgSrc ? <img src={imgSrc} alt={label} style={{ maxWidth: "100%", maxHeight: 140, borderRadius: 6, objectFit: "contain" }} onError={(e) => { e.target.style.display = "none"; }} /> : <Figure kind={fig} size={62} />}</> :
+          st === "ready" ? <><span className="pv-badge"><span className="badge done">✓</span></span>{imgSrc ? <img src={imgSrc} alt={label} onClick={() => id && scene && window.__lightbox(window.api.imageUrl(id, scene.step_key, v))} style={{ maxWidth: "100%", maxHeight: 140, borderRadius: 6, objectFit: "contain", cursor: "zoom-in" }} onError={(e) => { e.target.style.display = "none"; }} /> : <Figure kind={fig} size={62} />}</> :
             <><Figure kind={fig} size={62} /><span className="pv-sub" style={{ color: req ? "var(--red)" : "var(--ink-3)" }}>{req ? "нужен этот кадр" : "нет кадра"}</span></>}
       </div>
       {st === "ready" ?
@@ -77,6 +82,14 @@ function ScreenOutfit({ ctx }) {
   const data = out || SAMPLE_OUTFITS;
   const outfits = data.outfits;
 
+  async function addOutfit() {
+    if (!id) { setActiveIdx(outfits.length); return; }
+    try {
+      const d = await window.api.outfitAdd(id);
+      if (d.outfits) { setOut(d.outfits); setActiveIdx(d.outfits.outfits.length - 1); }
+    } catch (e) { /* ignore */ }
+  }
+
   return (
     <div>
       <div className="eyebrow">Шаг 4 из 6 · Наряды · по желанию</div>
@@ -104,7 +117,7 @@ function ScreenOutfit({ ctx }) {
             {o.required_present ? <span className="badge done" style={{ fontSize: 9 }}>✓ готов</span> : <span className="badge now" style={{ fontSize: 9 }}>не снят</span>}
           </button>
         ))}
-        <button className="otab add" title="Наряды добавляются в анкете героя">+ наряд</button>
+        <button className="otab add" title="Добавить новый наряд" onClick={addOutfit}>+ наряд</button>
       </div>
 
       {activeIdx === -1 ? (
@@ -112,13 +125,24 @@ function ScreenOutfit({ ctx }) {
           <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>Это «привычный» костюм героя — он уже зафиксирован кадрами паспорта. Отдельно снимать не нужно. Здесь — только для справки.</p>
           <PromptField value={data.base_outfit} readOnly rows={1} layer="Одежда" />
           <div className="btnrow" style={{ marginTop: 14 }}>
-            {outfits.length > 0 && <button className="btn primary" onClick={() => setActiveIdx(0)}>Перейти к первому доп. наряду →</button>}
+            {outfits.length > 0
+              ? <button className="btn primary" onClick={() => setActiveIdx(0)}>Перейти к первому доп. наряду →</button>
+              : <button className="btn primary" onClick={addOutfit}>+ Добавить наряд</button>}
           </div>
         </Panel>
       ) : outfits[activeIdx] ? (
         <OutfitBuilder key={outfits[activeIdx].id} ctx={ctx} id={id} outfit={outfits[activeIdx]} onUpdate={setOut} />
       ) : (
-        <Panel><p className="center muted" style={{ padding: 30 }}>Нет дополнительных нарядов — их добавляют в анкете героя.</p></Panel>
+        <Panel><p className="center muted" style={{ padding: 30 }}>Нет дополнительных нарядов. Нажмите «+ наряд», чтобы добавить.</p></Panel>
+      )}
+
+      {/* screen-level nav — always available (the per-outfit builder also has its
+          own approve/skip nav, so only show this on the base / empty states) */}
+      {(activeIdx === -1 || !outfits[activeIdx]) && (
+        <div className="btnrow split" style={{ marginTop: 18 }}>
+          <button className="btn ghost" onClick={() => ctx.go("emotions")}>← Назад</button>
+          <button className="btn go" onClick={() => ctx.go("props")}>Дальше: предметы →</button>
+        </div>
       )}
     </div>
   );
@@ -221,7 +245,15 @@ function OutfitDetailRow({ id, index, detail, onUpdate, onDelete }) {
     if (window.__bumpCost) window.__bumpCost(8);
     if (!id) { setSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setSt("ready"); return; }
     setSt("gen");
-    try { const d = await window.api.outfitDetail(id, "generate", { index: index, n: detail.n, prompt: prompt }); setV((x) => x + 1); setSt(d.ok ? "ready" : "empty"); onUpdate && d.outfits && onUpdate(d.outfits); } catch (e) { setSt("empty"); }
+    try {
+      const d = await window.api.outfitDetail(id, "generate", { index: index, n: detail.n, prompt: prompt });
+      setV((x) => x + 1); setSt(d.ok ? "ready" : "empty"); onUpdate && d.outfits && onUpdate(d.outfits);
+      window.setLastGen({
+        section: "Деталь костюма", view: "деталь " + detail.n, model: "nano-banana", size: "1024×1024",
+        layers: { composition: "extreme close-up macro product shot, " + prompt + ", plain background, no character" },
+        refs: [{ label: "стиль-реф", kind: "item" }, { label: "наряд: фас (OUTFIT)", kind: "front-full" }],
+      });
+    } catch (e) { setSt("empty"); }
   }
   const imgSrc = id && st === "ready" ? window.api.imageUrl(id, detail.step_key, v, 320) : null;
   return (
@@ -240,7 +272,7 @@ function OutfitDetailRow({ id, index, detail, onUpdate, onDelete }) {
           <div className="pv-title">превью</div>
           <div className={"pv " + (st === "ready" ? "ready" : st === "gen" ? "gen" : "empty")} style={{ minHeight: 100 }}>
             {st === "gen" ? <div className="pv-spin"></div>
-              : imgSrc ? <img src={imgSrc} alt={"деталь " + detail.n} style={{ maxWidth: "100%", maxHeight: 90, borderRadius: 6, objectFit: "contain" }} onError={(e) => { e.target.style.display = "none"; }} />
+              : imgSrc ? <img src={imgSrc} alt={"деталь " + detail.n} onClick={() => id && window.__lightbox(window.api.imageUrl(id, detail.step_key, v))} style={{ maxWidth: "100%", maxHeight: 90, borderRadius: 6, objectFit: "contain", cursor: "zoom-in" }} onError={(e) => { e.target.style.display = "none"; }} />
                 : <Figure kind="item" size={36} />}
           </div>
         </div>
@@ -267,6 +299,11 @@ function PropShot({ id, index, shot, total, onUpdate, onDelete }) {
       setV((x) => x + 1);
       setSt(d.ok ? "ready" : "empty");
       onUpdate && d.props && onUpdate(d.props);
+      window.setLastGen({
+        section: "Предмет", view: what || ("кадр " + shot.n), model: "nano-banana", size: "1024×1024",
+        layers: { item: prompt, composition: "product shot, centered, plain neutral background, soft even studio lighting, no character" },
+        refs: [{ label: "стиль-реф", kind: "item" }],
+      });
     } catch (e) { setSt("empty"); }
   }
   const imgSrc = id && st === "ready" ? window.api.imageUrl(id, shot.step_key, v, 320) : null;
@@ -290,7 +327,7 @@ function PropShot({ id, index, shot, total, onUpdate, onDelete }) {
         </div>
         <div className={"pv " + (st === "ready" ? "ready" : st === "gen" ? "gen" : "empty")} style={{ minHeight: 96 }}>
           {st === "gen" ? <div className="pv-spin"></div>
-            : imgSrc ? <img src={imgSrc} alt={"кадр " + shot.n} style={{ maxWidth: "100%", maxHeight: 84, borderRadius: 6, objectFit: "contain" }} onError={(e) => { e.target.style.display = "none"; }} />
+            : imgSrc ? <img src={imgSrc} alt={"кадр " + shot.n} onClick={() => id && window.__lightbox(window.api.imageUrl(id, shot.step_key, v))} style={{ maxWidth: "100%", maxHeight: 84, borderRadius: 6, objectFit: "contain", cursor: "zoom-in" }} onError={(e) => { e.target.style.display = "none"; }} />
               : <><Figure kind="item" size={34} />{st === "ready" && <span className="pv-sub" style={{ color: "var(--green)" }}>✓ готово</span>}</>}
         </div>
       </div>
