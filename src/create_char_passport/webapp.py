@@ -32,6 +32,7 @@ Design rules carried over from the Gradio layer:
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import tempfile
 import zipfile
@@ -964,11 +965,18 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         filename = f"{state.character_id}_passport.zip"
         return FileResponse(str(zip_path), media_type="application/zip", filename=filename)
 
-    web_root = web_dir or _REPO_WEB
+    web_root = web_dir or _web_dir_from_env() or _REPO_WEB
     if web_root.is_dir():
         # Mounted last so the explicit ``/api`` routes above always win.
         app.mount("/", StaticFiles(directory=str(web_root), html=True), name="web")
     return app
+
+
+def _web_dir_from_env() -> Path | None:
+    """SPA dir from ``CPH_WEB_DIR`` (set in the Docker image where the package is
+    installed and ``web/`` is copied to a fixed path), or ``None`` to fall back."""
+    value = os.environ.get("CPH_WEB_DIR")
+    return Path(value) if value else None
 
 
 app = create_app()
