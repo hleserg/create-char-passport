@@ -27,5 +27,20 @@
     extract(text) {
       return jsonFetch("/api/extract", { method: "POST", body: JSON.stringify({ text: text }) });
     },
+    /* pick an extracted draft -> create + persist the character ({character}) */
+    createCharacter(name) {
+      return jsonFetch("/api/character", { method: "POST", body: JSON.stringify({ name: name }) });
+    },
+    /* load a character (resume / open saved) -> ({character}) */
+    getCharacter(id) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id));
+    },
+    /* persist the edited anketa -> ({character}) */
+    saveAnketa(id, anketa) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/anketa", {
+        method: "PUT",
+        body: JSON.stringify(anketa),
+      });
+    },
   };
 })();

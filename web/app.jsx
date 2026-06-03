@@ -55,6 +55,7 @@ function App() {
   const [pStep, setPStep] = useStateApp(0);
   const [variant, setVariant] = useStateApp("A"); // passport layout variant
   const [activeChar, setActiveChar] = useStateApp("Герон");
+  const [activeCharId, setActiveCharId] = useStateApp(null);
   const [cost, setCost] = useStateApp(0);
   window.__bumpCost = (n) => setCost((c) => c + n);
 
@@ -74,7 +75,7 @@ function App() {
     window.scrollTo({ top: 0 });
   }
 
-  const ctx = { phase, setPhase, go, pStep, setPStep, variant, setVariant, activeChar, setActiveChar, done };
+  const ctx = { phase, setPhase, go, pStep, setPStep, variant, setVariant, activeChar, setActiveChar, activeCharId, setActiveCharId, done };
 
   const layers = computeLayers(phase, pStep, frozen);
   const values = layerValues(phase, pStep);

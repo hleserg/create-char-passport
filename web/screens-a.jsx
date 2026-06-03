@@ -44,6 +44,19 @@ function ScreenStart({ ctx }) {
     setExtracted(true);
   }
 
+  // Pick a found hero -> create + persist the character server-side, then open
+  // the anketa on its real id (degrades to name-only navigation with no backend).
+  async function pickHero(name) {
+    ctx.setActiveChar(name);
+    try {
+      const data = await window.api.createCharacter(name);
+      ctx.setActiveCharId(data && data.character ? data.character.id : null);
+    } catch (e) {
+      ctx.setActiveCharId(null);
+    }
+    ctx.go("data");
+  }
+
   return (
     <div>
       <div className="eyebrow">Шаг за шагом</div>
@@ -109,7 +122,7 @@ function ScreenStart({ ctx }) {
             <div className="field-lbl"><span className="ru">Нашли героев</span></div>
             <div className="btnrow">
               {found.map((n) => (
-                <button className="btn sm" key={n} onClick={() => { ctx.setActiveChar(n); ctx.go("data"); }}>
+                <button className="btn sm" key={n} onClick={() => pickHero(n)}>
                   <span className="av" style={{ width: 22, height: 22, borderRadius: 99, background: "var(--blue)", color: "#fff", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>{n[0]}</span>
                   {n} →
                 </button>
@@ -135,7 +148,7 @@ function ScreenStart({ ctx }) {
                     {c.status === "готов" && (
                       <button className="btn ghost sm" title="Скачать ZIP-архив героя (кадры + промты)" onClick={() => window.downloadHeroArchive && window.downloadHeroArchive(c.name)}>⬇ Скачать</button>
                     )}
-                    <button className="btn ghost sm" onClick={() => { ctx.setActiveChar(c.name); ctx.go(c.step || "data"); }}>Открыть →</button>
+                    <button className="btn ghost sm" onClick={() => { ctx.setActiveChar(c.name); ctx.setActiveCharId(c.id); ctx.go(c.step || "data"); }}>Открыть →</button>
                   </div>
                 </td>
               </tr>
@@ -189,6 +202,58 @@ function ScreenData({ ctx }) {
   });
   const [marks, setMarks] = useS1("шрам на левой щеке, выцветшая татуировка на левом предплечье");
   function setF(k, v) { setCard((c) => ({ ...c, [k]: v })); }
+
+  // Seed the whole form from the persisted character (degrades to the sample
+  // defaults above when there is no backend / no active id).
+  React.useEffect(() => {
+    if (!ctx.activeCharId) return;
+    let alive = true;
+    window.api.getCharacter(ctx.activeCharId).then((d) => {
+      if (!alive || !d || !d.character) return;
+      const c = d.character;
+      if (c.card) {
+        const card2 = { ...c.card };
+        if (card2.gender === "male") card2.gender = "муж.";
+        else if (card2.gender === "female") card2.gender = "жен.";
+        setCard(card2);
+      }
+      setMarks(c.marks || "");
+      if (c.emotions) {
+        setEmoOn(!!c.emotions.enabled);
+        const b = c.emotions.base || {};
+        setBaseEmoOn(!!b.enabled);
+        setBaseEmo(b.value || "");
+      }
+      if (c.outfits) {
+        setOutfitsOn(!!c.outfits.enabled);
+        if (Array.isArray(c.outfits.list))
+          setOutfitList(c.outfits.list.map((o) => ({ id: o.id, name: o.name, complex: !!o.complex })));
+      }
+      if (c.props) {
+        setPropsOn(!!c.props.enabled);
+        if (Array.isArray(c.props.list))
+          setPropList(c.props.list.map((p) => ({ id: p.id, name: p.name, shots: p.shots || 1 })));
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [ctx.activeCharId]);
+
+  // Persist the edited anketa, then advance to the passport step.
+  async function saveAndNext() {
+    if (!canNext) return;
+    if (ctx.activeCharId) {
+      try {
+        await window.api.saveAnketa(ctx.activeCharId, {
+          card,
+          marks,
+          emotions: { enabled: emoOn, base: { enabled: baseEmoOn, value: baseEmo } },
+          outfits: { enabled: outfitsOn, list: outfitList.map((o) => ({ name: o.name, complex: o.complex })) },
+          props: { enabled: propsOn, list: propList.map((p) => ({ name: p.name })) },
+        });
+      } catch (e) { /* offline preview: navigate anyway */ }
+    }
+    ctx.go("passport");
+  }
 
   const FIELDS = [
     { k: "gender", lbl: "Пол", type: "select", opts: ["муж.", "жен."], req: true, layer: "body" },
@@ -409,7 +474,7 @@ function ScreenData({ ctx }) {
         <div className="btnrow split">
           <button className="btn ghost" onClick={() => ctx.go("start")}>← Назад</button>
           <button className={"btn " + (canNext ? "go" : "disabled")} disabled={!canNext}
-            onClick={() => canNext && ctx.go("passport")} title={canNext ? "" : "Сначала заполните названия"}>
+            onClick={saveAndNext} title={canNext ? "" : "Сначала заполните названия"}>
             {canNext ? "Дальше: паспорт героя →" : "🔒 Заполните названия"}
           </button>
         </div>

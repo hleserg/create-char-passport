@@ -144,3 +144,81 @@ def test_saved_characters_skips_missing(bucket: Path, monkeypatch: pytest.Monkey
     # A listed id whose state.json vanished (race) must be skipped, not crash.
     monkeypatch.setattr(webapp, "list_character_ids", lambda: ["ghost"])
     assert webapp._saved_characters() == []
+
+
+# --------------------------------------------------------------------------- #
+# character: create / get / anketa round-trip
+# --------------------------------------------------------------------------- #
+def _seed_extracted(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prime the client's session with one extracted draft (no network)."""
+
+    def fake_extract(text: str, *, model: str | None = None, meter: CostLedger | None = None):
+        return [
+            ExtractedCharacter(
+                name="Герон",
+                table={"gender": "male", "age": "30"},
+                face="broad nose",
+                body="stocky",
+            )
+        ]
+
+    monkeypatch.setattr(webapp, "extract_characters", fake_extract)
+    client.post("/api/extract", json={"text": "history"})
+
+
+def test_create_character_persists_and_serialises(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_extracted(client, monkeypatch)
+    body = client.post("/api/character", json={"name": "Герон"}).json()["character"]
+    assert body["id"] == "geron"
+    assert body["card"]["gender"] == "male"
+    assert body["phase"] == "data"
+    assert client.get("/api/character/geron").status_code == 200  # persisted
+
+
+def test_create_character_unknown_draft_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_extracted(client, monkeypatch)
+    assert client.post("/api/character", json={"name": "Nobody"}).status_code == 404
+
+
+def test_get_character_not_found_404(client: TestClient) -> None:
+    assert client.get("/api/character/ghost").status_code == 404
+
+
+def test_get_character_from_bucket(client: TestClient, bucket: Path) -> None:
+    state = blank_state("Тайра")
+    state.character_table = {"gender": "female"}
+    save_state(state)
+    body = client.get("/api/character/tayra").json()["character"]
+    assert body["name"] == "Тайра"
+    assert body["card"]["gender"] == "female"
+
+
+def test_save_anketa_round_trip(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed_extracted(client, monkeypatch)
+    client.post("/api/character", json={"name": "Герон"})
+    res = client.put(
+        "/api/character/geron/anketa",
+        json={
+            "card": {"gender": "male", "age": "35", "build": "athletic"},
+            "marks": "scar on the left cheek",
+            "emotions": {"enabled": True, "base": {"enabled": True, "value": "grim"}},
+            "outfits": {"enabled": True, "list": [{"name": "plate armour", "complex": True}]},
+            "props": {"enabled": True, "list": [{"name": "sword"}, {"name": ""}]},
+        },
+    )
+    assert res.status_code == 200
+    body = client.get("/api/character/geron").json()["character"]  # reload from bucket
+    assert body["card"]["age"] == "35"
+    assert body["marks"] == "scar on the left cheek"
+    assert body["emotions"]["base"] == {"enabled": True, "value": "grim"}
+    assert body["outfits"]["list"] == [{"id": "1", "name": "plate armour", "complex": True}]
+    # the blank prop row is dropped; the kept one is born with one shot
+    assert body["props"]["list"] == [{"id": "1", "name": "sword", "shots": 1}]
+
+
+def test_save_anketa_not_found_404(client: TestClient) -> None:
+    assert client.put("/api/character/ghost/anketa", json={"card": {}}).status_code == 404

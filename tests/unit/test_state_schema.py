@@ -27,6 +27,14 @@ def test_character_id_from_name_slugifies() -> None:
     assert character_id_from_name("Übermensch!") == "ubermensch"
 
 
+def test_character_id_from_name_transliterates_cyrillic() -> None:
+    # Distinct Russian names must map to distinct ids (not all -> "character").
+    assert character_id_from_name("Герон") == "geron"
+    assert character_id_from_name("Тайра") == "tayra"
+    assert character_id_from_name("Луций") == "lutsiy"
+    assert character_id_from_name("Герон") != character_id_from_name("Тайра")
+
+
 def test_blank_state_defaults() -> None:
     state = blank_state("Heron")
     assert state.character_id == "heron"
