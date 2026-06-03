@@ -33,13 +33,29 @@ function AICheckDialog({ onClose, onAccept, layerName, reasoning, newPrompt }) {
   );
 }
 
-function AIEditDialog({ onClose }) {
+const STEP_RU = { passport_face: "Лицо (паспорт)", passport_body: "Тело (паспорт)" };
+function stepLabel(k) { return STEP_RU[k] || (k && k.startsWith("outfit_") ? "Наряд " + k.slice(7) : k); }
+
+function AIEditDialog({ id, onClose }) {
   const [stage, setStage] = useS2("ask");
   const [req, setReq] = useS2("");
-  const results = [
-    { step: "Лицо (FACE)", why: "Добавил «heavier brow» — так взгляд станет суровее, как вы просили.", prompt: "coarse face, broad nose, full lips, deep-set dark eyes, heavier brow, short rough dark hair, weathered tanned skin" },
-    { step: "Тело (BODY)", why: "Усилил «broad scarred shoulders», чтобы образ читался более грозным.", prompt: "stocky, powerfully built, broad scarred shoulders, faded tattoo on left forearm" },
-  ];
+  const [blocks, setBlocks] = useS2([]);
+  const [note, setNote] = useS2("");
+  const [accepted, setAccepted] = useS2({});
+
+  // Real whole-character review (Promise -> AI button shimmers for the round-trip).
+  async function send() {
+    if (!id) { setBlocks([]); setNote("Правка работает на сервере — нужен сохранённый герой."); setStage("res"); return; }
+    try {
+      const d = await window.api.edit(id, req);
+      setBlocks(d.blocks || []); setNote(d.note || "");
+    } catch (e) { setBlocks([]); setNote("Ошибка сети — попробуйте ещё раз."); }
+    setStage("res");
+  }
+  async function acceptBlock(b, i) {
+    if (id) { try { await window.api.editAccept(id, b.step_key, b.new_prompt); } catch (e) { /* ignore */ } }
+    setAccepted((a) => Object.assign({}, a, { [i]: true }));
+  }
   return (
     <Dialog onClose={onClose} wide>
       <h3>✦ Правка с ИИ</h3>
@@ -52,21 +68,28 @@ function AIEditDialog({ onClose }) {
           </Field>
           <div className="btnrow end">
             <button className="btn ghost" onClick={onClose}>Отмена</button>
-            <AIButton onClick={() => setStage("res")}>Отправить запрос</AIButton>
+            <AIButton onClick={send}>Отправить запрос</AIButton>
           </div>
         </>
       ) : (
         <>
-          <p>ИИ предлагает правки по {results.length} шагам. Примите те, что нравятся — отмеченные шаги
-            попросят перегенерировать кадр.</p>
-          {results.map((r, i) => (
-            <div className="panel soft" key={i} style={{ marginBottom: 12 }}>
-              <div className="field-lbl"><span className="ru">{r.step}</span></div>
-              <p style={{ fontSize: 13, color: "var(--ink-2)", margin: "0 0 8px" }}>{r.why}</p>
-              <PromptField value={r.prompt} readOnly rows={2} />
-              <div className="btnrow end" style={{ marginTop: 10 }}><button className="btn approve sm">Принять</button></div>
-            </div>
-          ))}
+          {blocks.length === 0 ? (
+            <p className="muted">{note || "ИИ не предложил правок — по его оценке всё в порядке."}</p>
+          ) : (
+            <>
+              <p>ИИ предлагает правки по {blocks.length} шаг(ам). Примите нужные — принятый шаг попросит перегенерировать кадр.</p>
+              {blocks.map((b, i) => (
+                <div className="panel soft" key={i} style={{ marginBottom: 12 }}>
+                  <div className="field-lbl"><span className="ru">{stepLabel(b.step_key)}</span></div>
+                  <p style={{ fontSize: 13, color: "var(--ink-2)", margin: "0 0 8px" }}>{b.justification}</p>
+                  <PromptField value={b.new_prompt} readOnly rows={2} />
+                  <div className="btnrow end" style={{ marginTop: 10 }}>
+                    {accepted[i] ? <span className="badge done">✓ принято</span> : <button className="btn approve sm" onClick={() => acceptBlock(b, i)}>Принять</button>}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
           <div className="btnrow end"><button className="btn ghost" onClick={onClose}>Закрыть</button></div>
         </>
       )}
@@ -127,12 +150,25 @@ function VariantSwitcher({ ctx }) {
 }
 
 /* layer field block for a passport frame */
-function PassportFields({ frame, step, face, body, outfit, setFace, setBody, setOutfit }) {
+function PassportFields({ frame, step, face, body, outfit, setFace, setBody, setOutfit, id, stepKey }) {
   const faceRO = step >= 1;
   const bodyRO = step >= 2;
   const showBody = step >= 1;
   const outfitRO = step >= 2;
   const [check, setCheck] = useS2(null);
+
+  // Real per-frame «Проверить с ИИ» (Promise -> AI button shimmers for the call).
+  async function doCheck() {
+    if (!id) { setCheck({ layer: frame.title, reasoning: "Проверка работает на сервере.", newPrompt: "" }); return; }
+    try {
+      const d = await window.api.check(id, stepKey);
+      setCheck({ layer: frame.title, reasoning: d.justification || "Замечаний нет — можно генерировать.", newPrompt: d.new_prompt || "" });
+    } catch (e) { setCheck({ layer: frame.title, reasoning: "Ошибка сети — попробуйте ещё раз.", newPrompt: "" }); }
+  }
+  function acceptCheck(np) {
+    if (!faceRO) setFace(np); else if (showBody && !bodyRO) setBody(np);
+    if (id) window.api.checkAccept(id, stepKey, np).catch(() => {});
+  }
   return (
     <>
       <Field ru="Лицо" en="FACE"
@@ -158,16 +194,12 @@ function PassportFields({ frame, step, face, body, outfit, setFace, setBody, set
       {/* Одна общая проверка: разом проверяет все заполняемые поля этого кадра */}
       {(!faceRO || !bodyRO || !outfitRO) && (
         <div className="btnrow" style={{ marginTop: 14 }}>
-          <AIButton onClick={() => setCheck(
-            step === 0
-              ? { layer: "Лицо", reasoning: "Проверил «Лицо» и «Одежда» вместе. В описании лица затесалось слово «calm» — это выражение, ему место в слое «Эмоция». Предлагаю убрать. Одежда описана корректно — замечаний нет.", newPrompt: "coarse face, broad nose, full lips, deep-set dark eyes, short rough dark hair, weathered tanned skin" }
-              : { layer: "поля кадра", reasoning: "Проверил «Тело» и «Одежда» вместе. Каждое поле описывает только своё (телосложение и наряд), слои не путаются — замечаний нет.", newPrompt: "" }
-          )}>Проверить поля с ИИ</AIButton>
+          <AIButton onClick={doCheck}>Проверить поля с ИИ</AIButton>
           <span className="muted" style={{ fontSize: 12 }}>проверит лицо{showBody ? ", тело" : ""} и одежду разом</span>
         </div>
       )}
 
-      {check && <AICheckDialog onClose={() => setCheck(null)} layerName={check.layer} reasoning={check.reasoning} newPrompt={check.newPrompt} />}
+      {check && <AICheckDialog onClose={() => setCheck(null)} onAccept={acceptCheck} layerName={check.layer} reasoning={check.reasoning} newPrompt={check.newPrompt} />}
     </>
   );
 }
@@ -196,8 +228,21 @@ function ScreenPassport({ ctx }) {
   const [imgV, setImgV] = useS2(0);
   const [err, setErr] = useS2(null);
   const [edit, setEdit] = useS2(false);
+  const [frameCheck, setFrameCheck] = useS2(null);
 
   const serverKey = "passport_" + frame.key;
+
+  async function doCheckFrame() {
+    if (!ctx.activeCharId) { setFrameCheck({ reasoning: "Проверка работает на сервере.", newPrompt: "" }); return; }
+    try {
+      const d = await window.api.check(ctx.activeCharId, serverKey);
+      setFrameCheck({ reasoning: d.justification || "Замечаний нет — кадр в порядке.", newPrompt: d.new_prompt || "" });
+    } catch (e) { setFrameCheck({ reasoning: "Ошибка сети — попробуйте ещё раз.", newPrompt: "" }); }
+  }
+  function acceptFrameCheck(np) {
+    if (step === 0) setFace(np); else if (step === 1) setBody(np);
+    if (ctx.activeCharId) window.api.checkAccept(ctx.activeCharId, serverKey, np).catch(() => {});
+  }
   const SAMPLE = {
     face: "coarse face, broad nose, full lips, deep-set dark eyes, short rough dark hair, weathered tanned skin",
     body: "stocky, powerfully built, broad shoulders, faded tattoo on left forearm",
@@ -284,7 +329,7 @@ function ScreenPassport({ ctx }) {
       {err && <div className="notice red" style={{ marginTop: 10 }}><span className="ic">⚠️</span><span className="tx">{err}</span></div>}
       <div className="btnrow" style={{ marginTop: 12 }}>
         <button className="btn primary" onClick={doGen}>{gen === "ready" ? "↻ Перегенерировать" : "Сгенерировать кадр"}</button>
-        <AIButton onClick={() => {}}>Проверить кадр с ИИ</AIButton>
+        <AIButton onClick={doCheckFrame}>Проверить кадр с ИИ</AIButton>
       </div>
       {gen === "ready" && <p className="muted" style={{ fontSize: 12, marginTop: 10, marginBottom: 0 }}>Не нравится — жмите «Перегенерировать». Прошлый вариант не пропадёт: он уйдёт в архив «отклонённые».</p>}
     </Panel>
@@ -294,7 +339,7 @@ function ScreenPassport({ ctx }) {
     <Panel key={"fields-" + frame.key} title="Описание кадра" icon="✍️" marks={ctx.variant !== "B"}
       collapsible={step >= 2} defaultCollapsed={step >= 2}
       badge={step >= 2 ? <span className="badge lock">🔒 всё заморожено</span> : null}>
-      <PassportFields frame={frame} step={step} face={face} body={body} outfit={outfit} setFace={setFace} setBody={setBody} setOutfit={setOutfit} />
+      <PassportFields frame={frame} step={step} face={face} body={body} outfit={outfit} setFace={setFace} setBody={setBody} setOutfit={setOutfit} id={ctx.activeCharId} stepKey={serverKey} />
     </Panel>
   );
 
@@ -355,7 +400,8 @@ function ScreenPassport({ ctx }) {
         <PassportActions ctx={ctx} step={step} onEdit={() => setEdit(true)} onApprove={approveAndNext} />
       </div>
 
-      {edit && <AIEditDialog onClose={() => setEdit(false)} />}
+      {edit && <AIEditDialog id={ctx.activeCharId} onClose={() => setEdit(false)} />}
+      {frameCheck && <AICheckDialog onClose={() => setFrameCheck(null)} onAccept={acceptFrameCheck} layerName={frame.title} reasoning={frameCheck.reasoning} newPrompt={frameCheck.newPrompt} />}
     </div>
   );
 }
@@ -461,6 +507,14 @@ function ScreenEmotions({ ctx }) {
     if (!ctx.activeCharId) { setEmo((e) => Object.assign({}, e || {}, { enabled: next })); return; }
     try { const d = await window.api.emotionEnable(ctx.activeCharId, next); if (d.emotions) setEmo(d.emotions); } catch (e) { /* ignore */ }
   }
+  const [baseCheck, setBaseCheck] = useS2(null);
+  async function doCheckBase() {
+    if (!ctx.activeCharId) { setBaseCheck({ reasoning: "Проверка работает на сервере.", newPrompt: "" }); return; }
+    try {
+      const d = await window.api.check(ctx.activeCharId, "base_emotion");
+      setBaseCheck({ reasoning: d.justification || "Замечаний нет.", newPrompt: d.new_prompt || "" });
+    } catch (e) { setBaseCheck({ reasoning: "Ошибка сети — попробуйте ещё раз.", newPrompt: "" }); }
+  }
 
   const cells = emo
     ? emo.items
@@ -511,7 +565,7 @@ function ScreenEmotions({ ctx }) {
               <PromptField value={baseVal} onChange={setBaseVal} rows={1} layer="Эмоция" />
               <div className="btnrow" style={{ marginTop: 10 }}>
                 <button className="btn sm" onClick={genBase}>{baseSt === "ready" ? "↻ Заново" : "Сгенерировать"}</button>
-                <AIButton small onClick={() => {}}>Проверить</AIButton>
+                <AIButton small onClick={doCheckBase}>Проверить</AIButton>
               </div>
             </Field>
             <div className="pv-col">
@@ -530,6 +584,9 @@ function ScreenEmotions({ ctx }) {
         <button className="btn ghost" onClick={() => ctx.go("passport")}>← Назад</button>
         <button className="btn go" onClick={() => ctx.go("outfit")}>Готово, дальше: наряды →</button>
       </div>
+
+      {baseCheck && <AICheckDialog onClose={() => setBaseCheck(null)} layerName="Эмоция по умолчанию" reasoning={baseCheck.reasoning} newPrompt={baseCheck.newPrompt}
+        onAccept={(np) => { setBaseVal(np); if (ctx.activeCharId) window.api.checkAccept(ctx.activeCharId, "base_emotion", np).catch(() => {}); }} />}
     </div>
   );
 }

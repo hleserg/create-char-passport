@@ -80,6 +80,28 @@
         body: JSON.stringify(anketa),
       });
     },
+    /* «Проверить с ИИ» one step -> ({justification, new_prompt, step_key, ok}) */
+    check(id, stepKey) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/check", {
+        method: "POST", body: JSON.stringify({ step_key: stepKey }),
+      });
+    },
+    checkAccept(id, stepKey, prompt) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/check/accept", {
+        method: "POST", body: JSON.stringify({ step_key: stepKey, prompt: prompt }),
+      });
+    },
+    /* «Правка с ИИ» whole character -> ({blocks, note, ok}) */
+    edit(id, requestText) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/edit", {
+        method: "POST", body: JSON.stringify({ request: requestText }),
+      });
+    },
+    editAccept(id, stepKey, prompt) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/edit/accept", {
+        method: "POST", body: JSON.stringify({ step_key: stepKey, prompt: prompt }),
+      });
+    },
     /* passport phase -> ({passport}) */
     getPassport(id) {
       return jsonFetch("/api/character/" + encodeURIComponent(id) + "/passport");
