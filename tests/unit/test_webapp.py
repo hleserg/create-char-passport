@@ -554,3 +554,81 @@ def test_archive_download(client: TestClient, bucket: Path) -> None:
 def test_finish_and_archive_404(client: TestClient) -> None:
     assert client.post("/api/character/ghost/finish").status_code == 404
     assert client.get("/api/character/ghost/archive").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# project STYLE: refs upload + auto-draft + edit + lock + reset
+# --------------------------------------------------------------------------- #
+def _img_files(n: int) -> list[tuple[str, tuple[str, bytes, str]]]:
+    """Multipart ``files=`` payload of ``n`` dummy PNG uploads."""
+    return [("files", (f"r{i}.png", b"img-bytes", "image/png")) for i in range(n)]
+
+
+def test_style_empty(client: TestClient, bucket: Path) -> None:
+    assert client.get("/api/style").json()["style"] == {
+        "prompt": "",
+        "approved": False,
+        "ref_keys": [],
+        "ref_count": 0,
+        "locked": False,
+    }
+
+
+def test_style_upload_drafts_on_fifth(
+    client: TestClient, bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        webapp, "draft_style_prompt", lambda paths, meter=None: "inked comic, muted watercolour"
+    )
+    four = client.post("/api/style/refs", files=_img_files(4)).json()
+    assert four["drafted"] is False
+    assert four["style"]["ref_count"] == 4
+    assert four["style"]["prompt"] == ""
+    fifth = client.post("/api/style/refs", files=_img_files(1)).json()
+    assert fifth["drafted"] is True
+    assert fifth["style"]["prompt"] == "inked comic, muted watercolour"
+    assert fifth["style"]["approved"] is True
+    assert fifth["style"]["ref_count"] == 5
+    assert client.get("/api/style/ref/ref_1").status_code == 200
+
+
+def test_style_put_then_locked(client: TestClient, bucket: Path) -> None:
+    edited = client.put("/api/style", json={"prompt": "hand-drawn ink"}).json()
+    assert edited["style"]["prompt"] == "hand-drawn ink"
+    # lock it with a character that already has a generated frame
+    state = blank_state("Локи")
+    state.steps["passport_face"] = StepRecord(last_path="refs/passport_face.png")
+    save_state(state)
+    assert client.get("/api/style").json()["style"]["locked"] is True
+    assert client.put("/api/style", json={"prompt": "x"}).status_code == 409
+
+
+def test_style_reset(client: TestClient, bucket: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(webapp, "draft_style_prompt", lambda paths, meter=None: "drafted style")
+    client.post("/api/style/refs", files=_img_files(5))
+    assert client.get("/api/style").json()["style"]["prompt"] == "drafted style"
+    reset = client.post("/api/style/reset").json()
+    assert reset["style"]["prompt"] == ""
+    assert reset["style"]["ref_count"] == 0
+
+
+def test_style_refs_empty_upload_ok(client: TestClient, bucket: Path) -> None:
+    # An empty multipart upload is a no-op (used to trigger a draft when refs
+    # already sit in the bucket) — it must not error.
+    assert client.post("/api/style/refs", files=_img_files(0)).status_code == 200
+
+
+def test_style_ref_bad_and_missing(client: TestClient, bucket: Path) -> None:
+    assert client.get("/api/style/ref/bad-key").status_code == 400
+    assert client.get("/api/style/ref/ref_9").status_code == 404
+
+
+def test_create_character_stamps_project_style(
+    client: TestClient, bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client.put("/api/style", json={"prompt": "frozen project style"})
+    _seed_extracted(client, monkeypatch)
+    cid = client.post("/api/character", json={"name": "Герон"}).json()["character"]["id"]
+    loaded = load_state(cid)
+    assert loaded is not None
+    assert loaded.prompt_layers.style == "frozen project style"

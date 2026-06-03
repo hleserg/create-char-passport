@@ -23,6 +23,33 @@
     session() {
       return jsonFetch("/api/session");
     },
+    /* project STYLE: prompt + refs + lock state */
+    getStyle() {
+      return jsonFetch("/api/style");
+    },
+    /* append reference image FILES (multipart — the Space proxy drops big JSON
+       bodies); the 5th ref triggers the LLM draft. Accepts a File or File[]. */
+    styleRefs(files) {
+      const list = Array.isArray(files) ? files : [files];
+      const fd = new FormData();
+      list.forEach((f) => fd.append("files", f));
+      return fetch("/api/style/refs", { method: "POST", credentials: "same-origin", body: fd })
+        .then((r) => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        });
+    },
+    /* edit the STYLE prompt in place (only before the first generation) */
+    styleSave(prompt) {
+      return jsonFetch("/api/style", { method: "PUT", body: JSON.stringify({ prompt: prompt }) });
+    },
+    /* «Изменить стиль»: clear the project style + refs */
+    styleReset() {
+      return jsonFetch("/api/style/reset", { method: "POST" });
+    },
+    styleRefUrl(key, v) {
+      return "/api/style/ref/" + encodeURIComponent(key) + "?v=" + (v || 0);
+    },
     /* paste a story -> extracted character drafts ({characters, cost}) */
     extract(text) {
       return jsonFetch("/api/extract", { method: "POST", body: JSON.stringify({ text: text }) });
