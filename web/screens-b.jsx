@@ -296,8 +296,11 @@ function ScreenPassport({ ctx }) {
       setGen(d.ok ? "ready" : "empty");
       if (!d.ok) setErr(d.error || "Не удалось сгенерировать кадр");
       window.setLastGen({
-        section: "Паспорт", view: frame.title, model: "nano-banana", size: "1024×1536",
-        layers: { style: (pp && pp.style) || "", face: face, body: step >= 1 ? body : "", outfit: outfit, composition: comp || FRAME_COMP[frame.key] },
+        section: "Паспорт", view: frame.title, model: "nano-banana",
+        size: ["face", "profile"].includes(frame.key) ? "1024×1024" : "1024×1536",
+        // EXPRESSION is its own layer; passport frames are always neutral (the
+        // backend forces it — K3), so show it here too.
+        layers: { style: (pp && pp.style) || "", face: face, body: step >= 1 ? body : "", outfit: outfit, expression: "neutral", composition: comp || FRAME_COMP[frame.key] },
         refs: frame.key === "face"
           ? [{ label: "стиль-реф", kind: "item" }]
           : (["profile", "back", "3q"].includes(frame.key)
