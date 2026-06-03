@@ -42,14 +42,18 @@ from pydantic import BaseModel, Field
 
 from create_char_passport.screens.router import ScreenId, WizardSession, resume_screen
 from create_char_passport.state import (
+    BASE_EMOTION_STEP,
     PASSPORT_STEPS,
     CharacterState,
     CostLedger,
+    emotion_step,
     normalize_character_table,
 )
 from create_char_passport.storage import (
     REFS_DIR,
+    archive_to_rejected,
     character_asset,
+    character_dir,
     list_character_ids,
     load_state,
     save_state,
@@ -63,6 +67,11 @@ from create_char_passport.wizard import (
     set_props_enabled,
     sync_outfits,
     sync_props,
+)
+from create_char_passport.wizard.emotions import (
+    generate_base_emotion,
+    generate_emotion,
+    missing_emotion_refs,
 )
 from create_char_passport.wizard.extraction import extract_characters
 from create_char_passport.wizard.passport import (
@@ -146,6 +155,18 @@ class StepRequest(BaseModel):
     """Body of step actions that only need a ``step_key`` (e.g. approve)."""
 
     step_key: str
+
+
+class EmotionRequest(BaseModel):
+    """Body of emotion actions that target one series item by index."""
+
+    index: int
+
+
+class BaseEmotionRequest(BaseModel):
+    """Body of ``POST /api/character/{id}/emotions/base`` (optional new value)."""
+
+    value: str | None = None
 
 
 def _cost_payload(ledger: CostLedger) -> dict[str, Any]:
@@ -292,6 +313,31 @@ def _passport_payload(state: CharacterState) -> dict[str, Any]:
         "frames": [_frame_payload(state, key) for key in PASSPORT_STEPS],
         "all_approved": all_passport_approved(state),
         "style": state.prompt_layers.style,
+        "cost": _cost_payload(state.cost),
+    }
+
+
+def _emotions_payload(state: CharacterState) -> dict[str, Any]:
+    """Serialise the emotions phase (series items + base emotion + missing set)."""
+    base = state.emotions.base_emotion
+    return {
+        "enabled": state.emotions.enabled,
+        "items": [
+            {
+                "index": i,
+                "value": item.value,
+                "step_key": emotion_step(item.value),
+                "has_image": bool(item.ref),
+            }
+            for i, item in enumerate(state.emotions.items)
+        ],
+        "base": {
+            "enabled": base.enabled,
+            "value": base.value,
+            "step_key": BASE_EMOTION_STEP,
+            "has_image": bool(base.ref),
+        },
+        "missing": missing_emotion_refs(state),
         "cost": _cost_payload(state.cost),
     }
 
@@ -471,6 +517,70 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(status_code=404, detail="no image")
         return FileResponse(str(path))
+
+    @app.get("/api/character/{character_id}/emotions")
+    def emotions(character_id: str, request: Request, response: Response) -> dict[str, Any]:
+        """Serialise the emotions phase (series + base emotion)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        return {"emotions": _emotions_payload(state)}
+
+    @app.post("/api/character/{character_id}/emotions/generate")
+    def emotions_generate(
+        character_id: str, body: EmotionRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Generate one emotion-series portrait (point-wise). Bills character + session."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        if not 0 <= body.index < len(state.emotions.items):
+            raise HTTPException(status_code=400, detail="emotion index out of range")
+        meter = CostLedger()
+        result = generate_emotion(state, body.index, meter=meter)
+        state.cost.merge(meter)
+        sess.cost.merge(meter)
+        save_state(state)
+        return {"ok": result.ok, "error": result.error, "emotions": _emotions_payload(state)}
+
+    @app.post("/api/character/{character_id}/emotions/base")
+    def emotions_base(
+        character_id: str, body: BaseEmotionRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Generate the base-emotion portrait (optionally updating its value first)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        if body.value is not None:
+            set_base_emotion(state, True, body.value)
+        meter = CostLedger()
+        result = generate_base_emotion(state, meter=meter)
+        state.cost.merge(meter)
+        sess.cost.merge(meter)
+        save_state(state)
+        return {"ok": result.ok, "error": result.error, "emotions": _emotions_payload(state)}
+
+    @app.post("/api/character/{character_id}/emotions/delete")
+    def emotions_delete(
+        character_id: str, body: EmotionRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Soft-delete one emotion's shot: archive it to rejected/ and clear the ref (#10)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        if not 0 <= body.index < len(state.emotions.items):
+            raise HTTPException(status_code=400, detail="emotion index out of range")
+        item = state.emotions.items[body.index]
+        if item.ref:
+            frame = character_asset(character_id, item.ref)
+            archive_to_rejected(character_dir(character_id), emotion_step(item.value), frame)
+            item.ref = None
+        save_state(state)
+        return {"emotions": _emotions_payload(state)}
 
     web_root = web_dir or _REPO_WEB
     if web_root.is_dir():

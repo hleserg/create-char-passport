@@ -315,3 +315,58 @@ def test_frame_image_missing_and_bad_key(
     cid = _make_character(client, monkeypatch)
     assert client.get(f"/api/character/{cid}/image/passport_face").status_code == 404
     assert client.get(f"/api/character/{cid}/image/bad-key").status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# emotions: serialize / generate / base / delete
+# --------------------------------------------------------------------------- #
+def _stub_emotion_gen(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("create_char_passport.wizard.generation.generate_image", _fake_gen_ok)
+
+
+def test_emotions_serialise(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    cid = _make_character(client, monkeypatch)
+    emo = client.get(f"/api/character/{cid}/emotions").json()["emotions"]
+    assert [i["value"] for i in emo["items"]] == ["angry, furious", "smiling warmly"]
+    assert emo["items"][0]["step_key"] == "emotion_angry_furious"
+    assert emo["base"]["enabled"] is False
+    assert all(not i["has_image"] for i in emo["items"])
+
+
+def test_emotions_generate_and_delete(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    cid = _make_character(client, monkeypatch)
+    _stub_emotion_gen(monkeypatch)
+    res = client.post(f"/api/character/{cid}/emotions/generate", json={"index": 0}).json()
+    assert res["ok"] is True
+    assert res["emotions"]["items"][0]["has_image"] is True
+    assert client.get(f"/api/character/{cid}/image/emotion_angry_furious").status_code == 200
+    # soft-delete -> ref cleared, image archived to rejected/
+    res = client.post(f"/api/character/{cid}/emotions/delete", json={"index": 0}).json()
+    assert res["emotions"]["items"][0]["has_image"] is False
+
+
+def test_emotions_base_generate(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    cid = _make_character(client, monkeypatch)
+    _stub_emotion_gen(monkeypatch)
+    res = client.post(
+        f"/api/character/{cid}/emotions/base", json={"value": "grim, brooding"}
+    ).json()
+    assert res["ok"] is True
+    assert res["emotions"]["base"]["value"] == "grim, brooding"
+    assert res["emotions"]["base"]["has_image"] is True
+
+
+def test_emotions_generate_bad_index_400(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    assert (
+        client.post(f"/api/character/{cid}/emotions/generate", json={"index": 9}).status_code == 400
+    )
+    assert (
+        client.post(f"/api/character/{cid}/emotions/delete", json={"index": 9}).status_code == 400
+    )
+
+
+def test_emotions_not_found_404(client: TestClient) -> None:
+    assert client.get("/api/character/ghost/emotions").status_code == 404

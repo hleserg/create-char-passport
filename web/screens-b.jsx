@@ -359,26 +359,35 @@ const EMO_ROW = [
   { v: "smiling warmly", ru: "тёплая улыбка", fig: "front-portrait" },
 ];
 
-function EmotionCell({ e, onArchive }) {
-  const [st, setSt] = useS2(e.v === "neutral" ? "ready" : "empty");
-  function gen() { if (window.__bumpCost) window.__bumpCost(8);
-    if (window.setLastGen) window.setLastGen({ section: "Эмоции", view: e.v + " (" + e.ru + ")",
-      layers: {
-        style: "graphic novel, bold ink linework, muted watercolour wash, dramatic chiaroscuro lighting",
-        face: "coarse face, broad nose, full lips, deep-set dark eyes, short rough dark hair, weathered tanned skin",
-        expression: e.v,
-        composition: "front facing portrait, head and shoulders, plain neutral grey background, soft even lighting" },
-      refs: [{ label: "стиль-реф", kind: "item" }, { label: "паспорт: фас-портрет (FACE)", kind: "front-portrait" }],
-      model: "nano-banana", size: "1024×1024" });
-    setSt("gen"); setTimeout(() => setSt("ready"), 1000); }
-  function archive() { onArchive && onArchive(e.v); setSt("empty"); }
+function EmotionCell({ item, id, onUpdate }) {
+  const [st, setSt] = useS2(item.has_image ? "ready" : "empty");
+  const [v, setV] = useS2(0);
+  React.useEffect(() => { setSt(item.has_image ? "ready" : "empty"); }, [item.has_image]);
+  async function gen() {
+    if (window.__bumpCost) window.__bumpCost(8);
+    if (!id) { setSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setSt("ready"); return; }
+    setSt("gen");
+    try {
+      const d = await window.api.emotionGenerate(id, item.index);
+      setV((x) => x + 1);
+      setSt(d.ok ? "ready" : "empty");
+      onUpdate && d.emotions && onUpdate(d.emotions);
+    } catch (e) { setSt("empty"); }
+  }
+  async function archive() {
+    if (id) {
+      try { const d = await window.api.emotionDelete(id, item.index); onUpdate && d.emotions && onUpdate(d.emotions); } catch (e) { /* ignore */ }
+    }
+    setSt("empty");
+  }
+  const imgSrc = id && st === "ready" ? window.api.imageUrl(id, item.step_key, v) : null;
   return (
     <div className="pv-col">
-      <div className="pv-title">{e.v}<br /><span style={{ fontWeight: 400, textTransform: "none", color: "var(--ink-2)", fontSize: 11 }}>{e.ru}</span></div>
+      <div className="pv-title">{item.value}</div>
       <div className={"pv " + (st === "ready" ? "ready" : st === "gen" ? "gen" : "empty")} style={{ minHeight: 150 }}>
         {st === "gen" ? (<><div className="pv-spin"></div><span className="pv-cap">генерация…</span></>)
-          : st === "ready" ? (<><span className="pv-badge"><span className="badge done">✓</span></span><Figure kind={e.fig} size={58} /></>)
-            : (<><Figure kind={e.fig} size={58} /><span className="pv-sub">нет кадра</span></>)}
+          : st === "ready" ? (<><span className="pv-badge"><span className="badge done">✓</span></span>{imgSrc ? <img src={imgSrc} alt={item.value} style={{ maxWidth: "100%", maxHeight: 130, borderRadius: 6, objectFit: "contain" }} onError={(e) => { e.target.style.display = "none"; }} /> : <Figure kind="front-portrait" size={58} />}</>)
+            : (<><Figure kind="front-portrait" size={58} /><span className="pv-sub">нет кадра</span></>)}
       </div>
       {st === "ready" ? (
         <div className="btnrow" style={{ flexWrap: "nowrap", gap: 6 }}>
@@ -393,10 +402,43 @@ function EmotionCell({ e, onArchive }) {
 }
 
 function ScreenEmotions({ ctx }) {
+  const [emo, setEmo] = useS2(null);
   const [baseOn, setBaseOn] = useS2(true);
+  const [baseVal, setBaseVal] = useS2("grim, brooding");
   const [baseSt, setBaseSt] = useS2("empty");
+  const [baseV, setBaseV] = useS2(0);
   const [archived, setArchived] = useS2(0);
-  function genBase() { if (window.__bumpCost) window.__bumpCost(8); setBaseSt("gen"); setTimeout(() => setBaseSt("ready"), 1000); }
+
+  React.useEffect(() => {
+    if (!ctx.activeCharId) return;
+    let alive = true;
+    window.api.getEmotions(ctx.activeCharId).then((d) => {
+      if (!alive || !d || !d.emotions) return;
+      setEmo(d.emotions);
+      setBaseOn(d.emotions.base.enabled);
+      if (d.emotions.base.value) setBaseVal(d.emotions.base.value);
+      setBaseSt(d.emotions.base.has_image ? "ready" : "empty");
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [ctx.activeCharId]);
+
+  async function genBase() {
+    if (window.__bumpCost) window.__bumpCost(8);
+    if (!ctx.activeCharId) { setBaseSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setBaseSt("ready"); return; }
+    setBaseSt("gen");
+    try {
+      const d = await window.api.emotionBase(ctx.activeCharId, baseVal);
+      setBaseV((v) => v + 1);
+      setBaseSt(d.ok ? "ready" : "empty");
+      if (d.emotions) setEmo(d.emotions);
+    } catch (e) { setBaseSt("empty"); }
+  }
+
+  const cells = emo
+    ? emo.items
+    : EMO_ROW.map((e, i) => ({ index: i, value: e.v, step_key: e.v, has_image: false }));
+  const baseImg = ctx.activeCharId && baseSt === "ready" ? window.api.imageUrl(ctx.activeCharId, "base_emotion", baseV) : null;
+
   return (
     <div>
       <div className="eyebrow">Шаг 3 из 6 · Эмоции · по желанию</div>
@@ -412,7 +454,7 @@ function ScreenEmotions({ ctx }) {
       <Panel title="Три базовые эмоции" icon="🎭">
         <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>Под каждой — своя кнопка. Перегенерируется только та эмоция, под которой нажали.</p>
         <div className="pv-grid" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
-          {EMO_ROW.map((e) => <EmotionCell key={e.v} e={e} onArchive={() => setArchived((n) => n + 1)} />)}
+          {cells.map((it) => <EmotionCell key={it.value} item={it} id={ctx.activeCharId} onUpdate={(e) => { setEmo(e); setArchived((n) => n + 1); }} />)}
         </div>
         {archived > 0 && <p className="muted" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>🗑 Отправлено в архив за эту сессию: <b>{archived}</b> — лежат в папке <span className="mono">rejected/</span>.</p>}
       </Panel>
@@ -424,7 +466,7 @@ function ScreenEmotions({ ctx }) {
           <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>«Обычное» выражение героя — будет подставляться во всех сценах вместо нейтрального.</p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 170px", gap: 16, alignItems: "start" }}>
             <Field ru="Настроение героя" en="EXPRESSION" hint={<DoDont yes="короткое выражение по-английски: grim, smiling, furious" no="описание мимики прозой, позу, одежду или фон" />}>
-              <PromptField value="grim, brooding" rows={1} layer="Эмоция" />
+              <PromptField value={baseVal} onChange={setBaseVal} rows={1} layer="Эмоция" />
               <div className="btnrow" style={{ marginTop: 10 }}>
                 <button className="btn sm" onClick={genBase}>{baseSt === "ready" ? "↻ Заново" : "Сгенерировать"}</button>
                 <AIButton small onClick={() => {}}>Проверить</AIButton>
@@ -433,7 +475,9 @@ function ScreenEmotions({ ctx }) {
             <div className="pv-col">
               <div className="pv-title">превью</div>
               <div className={"pv " + (baseSt === "ready" ? "ready" : baseSt === "gen" ? "gen" : "empty")} style={{ minHeight: 130 }}>
-                {baseSt === "gen" ? <div className="pv-spin"></div> : baseSt === "ready" ? <Figure kind="front-portrait" size={54} /> : <Figure kind="front-portrait" size={54} />}
+                {baseSt === "gen" ? <div className="pv-spin"></div>
+                  : baseImg ? <img src={baseImg} alt="база" style={{ maxWidth: "100%", maxHeight: 120, borderRadius: 6, objectFit: "contain" }} onError={(e) => { e.target.style.display = "none"; }} />
+                    : <Figure kind="front-portrait" size={54} />}
               </div>
             </div>
           </div>
