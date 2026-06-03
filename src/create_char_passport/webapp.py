@@ -31,7 +31,10 @@ Design rules carried over from the Gradio layer:
 
 from __future__ import annotations
 
+import json
 import secrets
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -51,9 +54,12 @@ from create_char_passport.state import (
     normalize_character_table,
     outfit_detail_step,
     outfit_step,
+    prop_shot_step,
+    state_to_dict,
 )
 from create_char_passport.storage import (
     REFS_DIR,
+    REJECTED_DIR,
     archive_to_rejected,
     character_asset,
     character_dir,
@@ -102,6 +108,12 @@ from create_char_passport.wizard.passport import (
     frame_title,
     generate_passport_frame,
     passport_index,
+)
+from create_char_passport.wizard.props import (
+    add_prop_shot,
+    delete_prop_shot,
+    generate_prop_shot,
+    set_prop_shot_prompt,
 )
 
 # Repo-relative location of the SPA (``<repo>/web``); P3's Docker image overrides
@@ -221,6 +233,21 @@ _OUTFIT_SCENES: dict[str, SceneId] = {
     "back_full": SceneId.BACK_FULL,
     "profile_full": SceneId.PROFILE_FULL,
 }
+
+
+class PropRequest(BaseModel):
+    """Body of prop actions targeting one prop by index (add shot)."""
+
+    index: int
+
+
+class PropShotRequest(BaseModel):
+    """Body of prop-shot actions (generate / delete) + optional editable fields."""
+
+    index: int
+    n: int
+    what: str | None = None
+    prompt: str | None = None
 
 
 def _cost_payload(ledger: CostLedger) -> dict[str, Any]:
@@ -444,6 +471,62 @@ def _require_outfit_index(state: CharacterState, index: int) -> None:
     """Guard: 400 unless ``index`` names an existing additional outfit."""
     if not 0 <= index < len(state.outfits):
         raise HTTPException(status_code=400, detail="outfit index out of range")
+
+
+def _props_payload(state: CharacterState) -> dict[str, Any]:
+    """Serialise the props phase (each prop + its 1-3 product shots)."""
+    return {
+        "enabled": state.props_enabled,
+        "items": [
+            {
+                "index": i,
+                "id": prop.id,
+                "name": prop.name,
+                "shots": [
+                    {
+                        "n": j + 1,
+                        "what": shot.what,
+                        "prompt": shot.prompt,
+                        "step_key": prop_shot_step(prop.id, j + 1),
+                        "has_image": bool(shot.ref),
+                    }
+                    for j, shot in enumerate(prop.shots)
+                ],
+            }
+            for i, prop in enumerate(state.props)
+        ],
+        "cost": _cost_payload(state.cost),
+    }
+
+
+def _require_prop_index(state: CharacterState, index: int) -> None:
+    """Guard: 400 unless ``index`` names an existing prop."""
+    if not 0 <= index < len(state.props):
+        raise HTTPException(status_code=400, detail="prop index out of range")
+
+
+def _build_archive(state: CharacterState) -> Path:
+    """Zip the character's golden set into a finish archive (#9).
+
+    Contents: ``passport.json`` (full state — all prompt layers per step) +
+    ``approved/`` (the current ``refs/`` golden frames) + ``rejected/`` (archived
+    attempts). Returned as a temp file the caller streams then the OS reaps.
+    """
+    cdir = character_dir(state.character_id)
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)  # noqa: SIM115
+    tmp.close()
+    with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "passport.json",
+            json.dumps(state_to_dict(state), ensure_ascii=False, indent=2),
+        )
+        for src, label in ((REFS_DIR, "approved"), (REJECTED_DIR, "rejected")):
+            folder = cdir / src
+            if folder.is_dir():
+                for item in sorted(folder.glob("*")):
+                    if item.is_file():
+                        zf.write(item, f"{label}/{item.name}")
+    return Path(tmp.name)
 
 
 def _load_for_session(sess: WizardSession, character_id: str) -> CharacterState | None:
@@ -797,6 +880,89 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         delete_outfit_detail(state, body.index, body.n)
         save_state(state)
         return {"outfits": _outfits_payload(state)}
+
+    @app.get("/api/character/{character_id}/props")
+    def props(character_id: str, request: Request, response: Response) -> dict[str, Any]:
+        """Serialise the props phase (each prop + its product shots)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        return {"props": _props_payload(state)}
+
+    @app.post("/api/character/{character_id}/props/shot/add")
+    def prop_shot_add(
+        character_id: str, body: PropRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Append an empty product-shot slot to a prop (capped at 3)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        _require_prop_index(state, body.index)
+        add_prop_shot(state, body.index)
+        save_state(state)
+        return {"props": _props_payload(state)}
+
+    @app.post("/api/character/{character_id}/props/shot/generate")
+    def prop_shot_generate(
+        character_id: str, body: PropShotRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Generate one product shot (no character); optionally set what/prompt first."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        _require_prop_index(state, body.index)
+        prop = state.props[body.index]
+        if not 1 <= body.n <= len(prop.shots):
+            raise HTTPException(status_code=400, detail="shot index out of range")
+        if body.what is not None:
+            prop.shots[body.n - 1].what = body.what.strip()
+        if body.prompt is not None:
+            set_prop_shot_prompt(state, prop_shot_step(prop.id, body.n), body.prompt)
+        meter = CostLedger()
+        result = generate_prop_shot(state, body.index, body.n, meter=meter)
+        state.cost.merge(meter)
+        sess.cost.merge(meter)
+        save_state(state)
+        return {"ok": result.ok, "error": result.error, "props": _props_payload(state)}
+
+    @app.post("/api/character/{character_id}/props/shot/delete")
+    def prop_shot_delete(
+        character_id: str, body: PropShotRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Delete one product-shot slot from a prop."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        _require_prop_index(state, body.index)
+        delete_prop_shot(state, body.index, body.n)
+        save_state(state)
+        return {"props": _props_payload(state)}
+
+    @app.post("/api/character/{character_id}/finish")
+    def finish(character_id: str, request: Request, response: Response) -> dict[str, Any]:
+        """Mark the character complete (clears the wizard cursor -> 'готов')."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        state.current_step = None
+        save_state(state)
+        return {"ok": True, "character": _saved_payload(state)}
+
+    @app.get("/api/character/{character_id}/archive")
+    def archive(character_id: str, request: Request, response: Response) -> FileResponse:
+        """Download the finish ZIP — passport.json + approved/ + rejected/ (#9)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        zip_path = _build_archive(state)
+        filename = f"{state.character_id}_passport.zip"
+        return FileResponse(str(zip_path), media_type="application/zip", filename=filename)
 
     web_root = web_dir or _REPO_WEB
     if web_root.is_dir():
