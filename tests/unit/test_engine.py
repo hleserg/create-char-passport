@@ -145,7 +145,7 @@ def test_generate_image_handles_429_rate_limit(
     result = generate_image(prompt_layers={"style": "x"}, refs=[], output_path=tmp_path / "out.png")
     assert result.ok is False
     assert result.image_path is None
-    assert "Rate limit" in (result.error or "")
+    assert "квота" in (result.error or "").lower()
 
 
 def test_generate_image_handles_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -164,7 +164,7 @@ def test_generate_image_handles_timeout(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr(engine_mod, "_get_client", lambda: Client())
     result = generate_image(prompt_layers={}, refs=[], output_path=tmp_path / "x.png")
     assert result.ok is False
-    assert "timed out" in (result.error or "").lower()
+    assert "не ответил" in (result.error or "")
 
 
 def test_generate_image_handles_no_image_returned(
@@ -192,7 +192,7 @@ def test_generate_image_handles_generic_error(
     monkeypatch.setattr(engine_mod, "_get_client", lambda: Client())
     result = generate_image(prompt_layers={}, refs=[], output_path=tmp_path / "x.png")
     assert result.ok is False
-    assert "Generation failed" in (result.error or "")
+    assert "Не удалось сгенерировать" in (result.error or "")
 
 
 def test_generate_image_records_cost_into_meter(

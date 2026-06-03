@@ -230,7 +230,10 @@ def generate_image(
             config=config,
         )
     except Exception as exc:
-        logger.warning("image generation failed: %s", exc.__class__.__name__)
+        # Log the API error detail (this is the provider's message, not user
+        # input) so image-gen failures are diagnosable; the UI still gets a
+        # short friendly message.
+        logger.warning("image generation failed: %s: %s", exc.__class__.__name__, str(exc)[:400])
         return GenerationResult(
             image_path=None,
             ok=False,
@@ -297,11 +300,27 @@ def call_llm(
 
 
 def _friendly_error(exc: BaseException) -> str:
-    """Map common API failure classes to a short user-facing message."""
+    """Map common API failure classes to a short user-facing message (Russian UI)."""
     name = exc.__class__.__name__.lower()
     text = str(exc)
-    if "429" in text or "rate" in name or "quota" in text.lower():
-        return "Rate limit hit. Wait a moment and press Retry."
+    if (
+        "429" in text
+        or "resource_exhausted" in text.lower()
+        or "rate" in name
+        or "quota" in text.lower()
+    ):
+        return (
+            "Лимит/квота Gemini на генерацию картинок исчерпана. Включите биллинг или "
+            "проверьте квоту ключа в Google AI Studio, либо подождите и нажмите "
+            "«Перегенерировать»."
+        )
     if "timeout" in name or "timeout" in text.lower():
-        return "Generator timed out. Press Retry — your prompt is preserved."
-    return "Generation failed. Press Retry — your prompt is preserved."
+        return "Генератор не ответил вовремя. Нажмите «Перегенерировать» — промт сохранён."
+    if (
+        "permission" in text.lower()
+        or "403" in text
+        or "not found" in text.lower()
+        or "404" in text
+    ):
+        return "Модель недоступна для этого ключа. Проверьте доступ ключа Gemini к image-модели."
+    return "Не удалось сгенерировать. Нажмите «Перегенерировать» — промт сохранён."
