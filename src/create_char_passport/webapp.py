@@ -40,6 +40,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from create_char_passport.gen import SceneId
 from create_char_passport.screens.router import ScreenId, WizardSession, resume_screen
 from create_char_passport.state import (
     BASE_EMOTION_STEP,
@@ -48,6 +49,8 @@ from create_char_passport.state import (
     CostLedger,
     emotion_step,
     normalize_character_table,
+    outfit_detail_step,
+    outfit_step,
 )
 from create_char_passport.storage import (
     REFS_DIR,
@@ -74,6 +77,20 @@ from create_char_passport.wizard.emotions import (
     missing_emotion_refs,
 )
 from create_char_passport.wizard.extraction import extract_characters
+from create_char_passport.wizard.outfits import (
+    add_outfit_detail,
+    all_outfits_approved,
+    approve_outfit,
+    delete_outfit_detail,
+    generate_outfit_detail,
+    generate_outfit_scene,
+    missing_outfit_scenes,
+    outfit_scenes,
+    required_scenes_present,
+    set_outfit_complex,
+    set_outfit_detail_prompt,
+    set_outfit_prompt,
+)
 from create_char_passport.wizard.passport import (
     all_passport_approved,
     apply_layer_edit,
@@ -167,6 +184,43 @@ class BaseEmotionRequest(BaseModel):
     """Body of ``POST /api/character/{id}/emotions/base`` (optional new value)."""
 
     value: str | None = None
+
+
+class OutfitSceneRequest(BaseModel):
+    """Body of ``POST /api/character/{id}/outfits/generate`` (one full-length scene)."""
+
+    index: int
+    scene: str
+    prompt: str | None = None
+    complex: bool | None = None
+
+
+class OutfitRequest(BaseModel):
+    """Body of outfit actions targeting one outfit by index (approve / add detail)."""
+
+    index: int
+
+
+class OutfitComplexRequest(BaseModel):
+    """Body of ``POST /api/character/{id}/outfits/complex``."""
+
+    index: int
+    complex: bool
+
+
+class OutfitDetailRequest(BaseModel):
+    """Body of costume-detail actions (generate / delete) by outfit index + 1-based n."""
+
+    index: int
+    n: int
+    prompt: str | None = None
+
+
+_OUTFIT_SCENES: dict[str, SceneId] = {
+    "front_full": SceneId.FRONT_FULL,
+    "back_full": SceneId.BACK_FULL,
+    "profile_full": SceneId.PROFILE_FULL,
+}
 
 
 def _cost_payload(ledger: CostLedger) -> dict[str, Any]:
@@ -340,6 +394,56 @@ def _emotions_payload(state: CharacterState) -> dict[str, Any]:
         "missing": missing_emotion_refs(state),
         "cost": _cost_payload(state.cost),
     }
+
+
+def _outfit_payload(index: int, outfit: Any) -> dict[str, Any]:
+    """Serialise one outfit (scenes + costume details + completeness)."""
+    refs = outfit.refs
+    scenes = [
+        {
+            "scene": scene.value,
+            "step_key": f"{outfit_step(outfit.id)}_{scene.value}",
+            "has_image": bool(getattr(refs, scene.value)),
+            "approved": bool(getattr(refs, f"{scene.value}_approved")),
+        }
+        for scene in outfit_scenes(outfit)
+    ]
+    details = [
+        {
+            "n": i + 1,
+            "prompt": detail.prompt,
+            "step_key": outfit_detail_step(outfit.id, i + 1),
+            "has_image": bool(detail.ref),
+        }
+        for i, detail in enumerate(outfit.details)
+    ]
+    return {
+        "index": index,
+        "id": outfit.id,
+        "name": outfit.prompt,
+        "complex": outfit.complex,
+        "scenes": scenes,
+        "details": details,
+        "required_present": required_scenes_present(outfit),
+    }
+
+
+def _outfits_payload(state: CharacterState) -> dict[str, Any]:
+    """Serialise the outfits phase (additional outfits + base + completeness)."""
+    return {
+        "enabled": state.outfits_enabled,
+        "base_outfit": state.base_outfit.prompt,
+        "outfits": [_outfit_payload(i, o) for i, o in enumerate(state.outfits)],
+        "all_approved": all_outfits_approved(state),
+        "missing": missing_outfit_scenes(state),
+        "cost": _cost_payload(state.cost),
+    }
+
+
+def _require_outfit_index(state: CharacterState, index: int) -> None:
+    """Guard: 400 unless ``index`` names an existing additional outfit."""
+    if not 0 <= index < len(state.outfits):
+        raise HTTPException(status_code=400, detail="outfit index out of range")
 
 
 def _load_for_session(sess: WizardSession, character_id: str) -> CharacterState | None:
@@ -581,6 +685,118 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             item.ref = None
         save_state(state)
         return {"emotions": _emotions_payload(state)}
+
+    @app.get("/api/character/{character_id}/outfits")
+    def outfits(character_id: str, request: Request, response: Response) -> dict[str, Any]:
+        """Serialise the outfits phase (additional outfits + scenes + details)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        return {"outfits": _outfits_payload(state)}
+
+    @app.post("/api/character/{character_id}/outfits/generate")
+    def outfits_generate(
+        character_id: str, body: OutfitSceneRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Generate one full-length outfit scene (front/back/profile). Bills the ledgers."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        _require_outfit_index(state, body.index)
+        scene = _OUTFIT_SCENES.get(body.scene)
+        if scene is None:
+            raise HTTPException(status_code=400, detail="unknown outfit scene")
+        if body.complex is not None:
+            set_outfit_complex(state, body.index, body.complex)
+        if body.prompt is not None:
+            set_outfit_prompt(state, outfit_step(state.outfits[body.index].id), body.prompt)
+        meter = CostLedger()
+        result = generate_outfit_scene(state, body.index, scene, meter=meter)
+        state.cost.merge(meter)
+        sess.cost.merge(meter)
+        save_state(state)
+        return {"ok": result.ok, "error": result.error, "outfits": _outfits_payload(state)}
+
+    @app.post("/api/character/{character_id}/outfits/complex")
+    def outfits_complex(
+        character_id: str, body: OutfitComplexRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Toggle an outfit's 'complex' flag (adds the profile scene + detail block)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        _require_outfit_index(state, body.index)
+        set_outfit_complex(state, body.index, body.complex)
+        save_state(state)
+        return {"outfits": _outfits_payload(state)}
+
+    @app.post("/api/character/{character_id}/outfits/approve")
+    def outfits_approve(
+        character_id: str, body: OutfitRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Approve an outfit (requires front+back present) and make it active."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        _require_outfit_index(state, body.index)
+        if not approve_outfit(state, body.index):
+            raise HTTPException(status_code=400, detail="outfit incomplete (need front + back)")
+        save_state(state)
+        return {"outfits": _outfits_payload(state)}
+
+    @app.post("/api/character/{character_id}/outfits/detail/add")
+    def outfit_detail_add(
+        character_id: str, body: OutfitRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Append an empty costume-detail slot to an outfit (capped)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        _require_outfit_index(state, body.index)
+        add_outfit_detail(state, body.index)
+        save_state(state)
+        return {"outfits": _outfits_payload(state)}
+
+    @app.post("/api/character/{character_id}/outfits/detail/generate")
+    def outfit_detail_generate(
+        character_id: str, body: OutfitDetailRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Generate a costume-detail macro shot (#7); optionally set its prompt first."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        _require_outfit_index(state, body.index)
+        outfit = state.outfits[body.index]
+        if not 1 <= body.n <= len(outfit.details):
+            raise HTTPException(status_code=400, detail="detail index out of range")
+        if body.prompt is not None:
+            set_outfit_detail_prompt(state, outfit_detail_step(outfit.id, body.n), body.prompt)
+        meter = CostLedger()
+        result = generate_outfit_detail(state, body.index, body.n, meter=meter)
+        state.cost.merge(meter)
+        sess.cost.merge(meter)
+        save_state(state)
+        return {"ok": result.ok, "error": result.error, "outfits": _outfits_payload(state)}
+
+    @app.post("/api/character/{character_id}/outfits/detail/delete")
+    def outfit_detail_delete(
+        character_id: str, body: OutfitDetailRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Delete a costume-detail slot from an outfit."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        _require_outfit_index(state, body.index)
+        delete_outfit_detail(state, body.index, body.n)
+        save_state(state)
+        return {"outfits": _outfits_payload(state)}
 
     web_root = web_dir or _REPO_WEB
     if web_root.is_dir():

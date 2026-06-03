@@ -4,72 +4,78 @@ const { useState: useS3 } = React;
 /* =========================================================
    SCENE CARD — preview + own generate + edit-scene + approve
    ========================================================= */
-function SceneCard({ frame, onStateChange, onArchive }) {
-  const [st, setSt] = useS3(frame.initial || "empty");
-  const [scene, setScene] = useS3(frame.scene);
-  const [modal, setModal] = useS3(false);
+function SceneCard({ id, index, scene, label, fig, req, getGen, onUpdate, register }) {
+  const has = scene && scene.has_image;
+  const [st, setSt] = useS3(has ? "ready" : "empty");
+  const [v, setV] = useS3(0);
+  React.useEffect(() => { setSt(scene && scene.has_image ? "ready" : "empty"); }, [scene && scene.has_image]);
 
-  function setState(next) {setSt(next);onStateChange && onStateChange(frame.key, next);}
-  function gen() {if (window.__bumpCost) window.__bumpCost(8);
-    if (window.setLastGen) window.setLastGen({ section: frame.section || "Наряд", view: frame.title,
-      layers: {
-        style: "graphic novel, bold ink linework, muted watercolour wash, dramatic chiaroscuro lighting",
-        face: "coarse face, broad nose, full lips, deep-set dark eyes, short rough dark hair, weathered tanned skin",
-        body: "stocky, powerfully built, broad shoulders, faded tattoo on left forearm",
-        outfit: frame.outfitPrompt || "ornate ceremonial plate armor, engraved pauldrons, crimson cloak",
-        composition: scene },
-      refs: [{ label: "стиль-реф", kind: "item" }, { label: "паспорт: фас-портрет (FACE)", kind: "front-portrait" }, { label: "паспорт: фас, рост (BODY)", kind: "front-full" }],
-      model: "nano-banana", size: "1024×1536" });
-    setState("gen");setTimeout(() => setState("ready"), 1000);}
-  function archive() {onArchive && onArchive(frame.title);setState("empty");}
+  async function gen() {
+    if (window.__bumpCost) window.__bumpCost(8);
+    if (!id || !scene) { setSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setSt("ready"); return; }
+    setSt("gen");
+    try {
+      const d = await window.api.outfitGenerate(id, { index, scene: scene.scene, prompt: getGen ? getGen() : undefined });
+      setV((x) => x + 1);
+      setSt(d.ok ? "ready" : "empty");
+      onUpdate && d.outfits && onUpdate(d.outfits);
+    } catch (e) { setSt("empty"); }
+  }
+  // expose gen() so the parent can "догенерить недостающие"
+  React.useEffect(() => { register && scene && register(scene.scene, gen); });
 
-  // allow parent to trigger generation of missing frames
-  React.useEffect(() => {
-    frame._gen = gen;
-    frame._state = st;
-  });
-
+  const imgSrc = id && scene && st === "ready" ? window.api.imageUrl(id, scene.step_key, v) : null;
   return (
     <div className="pv-col">
-      <div className="pv-title">{frame.title}{frame.req && <span style={{ color: "var(--red)" }}> *</span>}</div>
+      <div className="pv-title">{label}{req && <span style={{ color: "var(--red)" }}> *</span>}</div>
       <div className={"pv " + (st === "ready" ? "ready" : st === "gen" ? "gen" : "empty")} style={{ minHeight: 160 }}>
         {st === "gen" ? <div className="pv-spin"></div> :
-        st === "ready" ? <><span className="pv-badge"><span className="badge done">✓</span></span><Figure kind={frame.fig} size={62} /></> :
-        <><Figure kind={frame.fig} size={62} /><span className="pv-sub" style={{ color: frame.req ? "var(--red)" : "var(--ink-3)" }}>{frame.req ? "нужен этот кадр" : "нет кадра"}</span></>}
+          st === "ready" ? <><span className="pv-badge"><span className="badge done">✓</span></span>{imgSrc ? <img src={imgSrc} alt={label} style={{ maxWidth: "100%", maxHeight: 140, borderRadius: 6, objectFit: "contain" }} onError={(e) => { e.target.style.display = "none"; }} /> : <Figure kind={fig} size={62} />}</> :
+            <><Figure kind={fig} size={62} /><span className="pv-sub" style={{ color: req ? "var(--red)" : "var(--ink-3)" }}>{req ? "нужен этот кадр" : "нет кадра"}</span></>}
       </div>
       {st === "ready" ?
-      <div className="btnrow" style={{ flexWrap: "nowrap", gap: 6 }}>
-          <button className="btn warn sm" onClick={archive} title="Отправить этот кадр в архив (rejected)" style={{ flex: "0 0 auto" }}>🗑 Удалить</button>
-          <button className="btn sm" onClick={gen} style={{ flex: 1 }}>↻ Перегенерировать</button>
-        </div> :
-
-      <button className="btn sm" onClick={gen} style={{ width: "100%" }}>Сгенерировать</button>
-      }
-      <button className="btn ghost sm" onClick={() => setModal(true)} style={{ width: "100%" }}>⚙ Изменить сцену</button>
-      {modal && <SceneModal title={frame.title} value={scene} onClose={() => setModal(false)}
-      onApply={(txt, changed) => {setScene(txt);if (changed) gen();}} />}
+        <button className="btn sm" onClick={gen} style={{ width: "100%" }}>↻ Перегенерировать</button> :
+        <button className="btn sm" onClick={gen} style={{ width: "100%" }}>Сгенерировать</button>}
     </div>);
-
 }
 
+const SCENE_META = {
+  front_full: { label: "Фас, рост", fig: "front-full", req: true },
+  back_full: { label: "Спина, рост", fig: "back-full", req: true },
+  profile_full: { label: "Профиль, рост", fig: "profile-portrait", req: false },
+};
+
+/* sample outfits payload for the static preview (no backend) */
+const SAMPLE_OUTFITS = {
+  enabled: true,
+  base_outfit: "dark fur-trimmed leather tunic, wide leather belt",
+  outfits: [
+    { index: 0, id: "1", name: "ornate ceremonial plate armor, engraved pauldrons, crimson cloak", complex: true,
+      scenes: [{ scene: "front_full", step_key: "", has_image: false, approved: false }, { scene: "back_full", step_key: "", has_image: false, approved: false }, { scene: "profile_full", step_key: "", has_image: false, approved: false }],
+      details: [], required_present: false },
+    { index: 1, id: "2", name: "worn travelling cloak, hood, leather satchel", complex: false,
+      scenes: [{ scene: "front_full", step_key: "", has_image: false, approved: false }, { scene: "back_full", step_key: "", has_image: false, approved: false }],
+      details: [], required_present: false },
+  ],
+  all_approved: false, missing: [],
+};
+
 function ScreenOutfit({ ctx }) {
-  // multiple outfits for this character (from the анкета). Base is read-only here.
-  const OUTFITS = [
-    { id: "base", name: "Базовый костюм", prompt: "dark fur-trimmed leather tunic, wide leather belt", base: true, done: true },
-    { id: "parade", name: "Парадный доспех", prompt: "ornate ceremonial plate armor, engraved pauldrons, crimson cloak", complex: true, done: false },
-    { id: "travel", name: "Дорожный плащ", prompt: "worn travelling cloak, hood, leather satchel", complex: false, done: false },
-  ];
-  const [activeOutfit, setActiveOutfit] = useS3("parade");
-  const outfit = OUTFITS.find((o) => o.id === activeOutfit) || OUTFITS[1];
+  const id = ctx.activeCharId;
+  const [out, setOut] = useS3(null);
+  const [activeIdx, setActiveIdx] = useS3(0); // -1 = base tab, else outfit index
 
-  const [complex, setComplex] = useS3(true);
-  const [details, setDetails] = useS3([{ id: 1, prompt: "close-up of engraved pauldron", st: "empty" }]);
-  // per-frame generated state, lifted so we can gate "next"
-  const [states, setStates] = useS3({ front: "ready", back: "empty", profile: "empty" });
-  const [archived, setArchived] = useS3(0);
+  React.useEffect(() => {
+    if (!id) { setActiveIdx(0); return; }
+    let alive = true;
+    window.api.getOutfits(id).then((d) => {
+      if (alive && d && d.outfits) { setOut(d.outfits); setActiveIdx(d.outfits.outfits.length ? 0 : -1); }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [id]);
 
-  function onCardState(key, next) {setStates((s) => ({ ...s, [key]: next }));}
-  function archiveFrame() {setArchived((n) => n + 1);}
+  const data = out || SAMPLE_OUTFITS;
+  const outfits = data.outfits;
 
   return (
     <div>
@@ -81,7 +87,7 @@ function ScreenOutfit({ ctx }) {
         <p>Наряды вы перечислили в анкете героя. Здесь каждый <b>собирается отдельно</b> — переключайтесь
           вкладками. <b>Базовый костюм</b> уже снят на шаге паспорта, поэтому он только для справки (🔒).</p>
         <p>Для каждого наряда нужны минимум <b>Фас</b> и <b>Спина</b> <span style={{ color: "var(--red)" }}>*</span>.
-          Не нравится кадр — <b>«↻ Перегенерировать»</b> или <b>«🗑 Удалить»</b> (уйдёт в архив, не пропадёт).</p>
+          Не нравится кадр — <b>«↻ Перегенерировать»</b> (прошлый уйдёт в архив, не пропадёт).</p>
         <p><b>Галочка «Сложный наряд»</b> нужна для костюмов с мелкими деталями (гравировка, узор, пряжки):
           она добавляет кадр <b>в профиль</b> и блок <b>«Детали костюма»</b> с макро-планами. Для простой
           одежды её можно не включать.</p>
@@ -89,58 +95,68 @@ function ScreenOutfit({ ctx }) {
 
       {/* outfit tabs */}
       <div className="otabs">
-        {OUTFITS.map((o) => (
-          <button key={o.id} className={"otab" + (o.id === activeOutfit ? " on" : "") + (o.base ? " base" : "")}
-            onClick={() => setActiveOutfit(o.id)}>
-            <span className="otab-nm">{o.name}</span>
-            {o.base ? <span className="badge lock" style={{ fontSize: 9 }}>🔒 база</span>
-              : o.done ? <span className="badge done" style={{ fontSize: 9 }}>✓ готов</span>
-                : <span className="badge now" style={{ fontSize: 9 }}>не снят</span>}
+        <button className={"otab base" + (activeIdx === -1 ? " on" : "")} onClick={() => setActiveIdx(-1)}>
+          <span className="otab-nm">Базовый костюм</span><span className="badge lock" style={{ fontSize: 9 }}>🔒 база</span>
+        </button>
+        {outfits.map((o, i) => (
+          <button key={o.id} className={"otab" + (i === activeIdx ? " on" : "")} onClick={() => setActiveIdx(i)}>
+            <span className="otab-nm">{o.name || ("наряд " + o.id)}</span>
+            {o.required_present ? <span className="badge done" style={{ fontSize: 9 }}>✓ готов</span> : <span className="badge now" style={{ fontSize: 9 }}>не снят</span>}
           </button>
         ))}
         <button className="otab add" title="Наряды добавляются в анкете героя">+ наряд</button>
       </div>
 
-      {outfit.base ? (
-        <Panel title={outfit.name} icon="👕" className="grey" badge={<span className="badge lock">🔒 снят на паспорте</span>}>
+      {activeIdx === -1 ? (
+        <Panel title="Базовый костюм" icon="👕" className="grey" badge={<span className="badge lock">🔒 снят на паспорте</span>}>
           <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>Это «привычный» костюм героя — он уже зафиксирован кадрами паспорта. Отдельно снимать не нужно. Здесь — только для справки.</p>
-          <PromptField value={outfit.prompt} readOnly rows={1} layer="Одежда" />
+          <PromptField value={data.base_outfit} readOnly rows={1} layer="Одежда" />
           <div className="btnrow" style={{ marginTop: 14 }}>
-            <button className="btn primary" onClick={() => setActiveOutfit("parade")}>Перейти к первому доп. наряду →</button>
+            {outfits.length > 0 && <button className="btn primary" onClick={() => setActiveIdx(0)}>Перейти к первому доп. наряду →</button>}
           </div>
         </Panel>
+      ) : outfits[activeIdx] ? (
+        <OutfitBuilder key={outfits[activeIdx].id} ctx={ctx} id={id} outfit={outfits[activeIdx]} onUpdate={setOut} />
       ) : (
-        <OutfitBuilder key={outfit.id} ctx={ctx} outfit={outfit} complex={complex} setComplex={setComplex}
-          details={details} setDetails={setDetails} states={states} setStates={setStates}
-          archived={archived} archiveFrame={archiveFrame} onCardState={onCardState} />
+        <Panel><p className="center muted" style={{ padding: 30 }}>Нет дополнительных нарядов — их добавляют в анкете героя.</p></Panel>
       )}
     </div>
   );
 }
 
 /* builder body for one (non-base) outfit */
-function OutfitBuilder({ ctx, outfit, complex, setComplex, details, setDetails, states, onCardState, archived, archiveFrame }) {
-  const BODY_SCENE = "Full-length character reference, head-to-toe, standing straight, both feet flat on the ground, plain neutral grey background, soft even lighting.";
-  const frames = [
-    { key: "front", title: "Фас, рост", fig: "front-full", req: true, scene: BODY_SCENE, initial: states.front },
-    { key: "back", title: "Спина, рост", fig: "back-full", req: true, scene: "Full-length character reference seen from behind, back view, head-to-toe, both feet flat on the ground, plain neutral grey background.", initial: states.back }];
-  if (complex) frames.push({ key: "profile", title: "Профиль, рост", fig: "profile-portrait", req: false, scene: "Full-length character reference, strict side profile, head-to-toe, both feet flat on the ground, plain neutral grey background.", initial: states.profile });
+function OutfitBuilder({ ctx, id, outfit, onUpdate }) {
+  const [prompt, setPrompt] = useS3(outfit.name || "");
+  React.useEffect(() => { setPrompt(outfit.name || ""); }, [outfit.id]);
+  const genFns = React.useRef({});
+  function register(scene, fn) { genFns.current[scene] = fn; }
 
-  const missing = frames.filter((f) => f.req && states[f.key] !== "ready");
-  const canNext = ["front", "back"].every((k) => states[k] === "ready");
-  function genMissing() {missing.forEach((f) => f._gen && f._gen());}
+  const front = outfit.scenes.find((s) => s.scene === "front_full");
+  const back = outfit.scenes.find((s) => s.scene === "back_full");
+  const canNext = !!(front && front.has_image) && !!(back && back.has_image);
+  const missing = outfit.scenes.filter((s) => SCENE_META[s.scene] && SCENE_META[s.scene].req && !s.has_image);
+  function genMissing() { missing.forEach((s) => { const fn = genFns.current[s.scene]; fn && fn(); }); }
+
+  async function toggleComplex() {
+    if (!id) return;
+    try { const d = await window.api.outfitComplex(id, outfit.index, !outfit.complex); onUpdate && d.outfits && onUpdate(d.outfits); } catch (e) { /* ignore */ }
+  }
+  async function approveNext() {
+    if (id && canNext) { try { await window.api.outfitApprove(id, outfit.index); } catch (e) { /* ignore */ } }
+    ctx.go("props");
+  }
 
   return (
     <div>
       <Panel title="Описание наряда" icon="🧥">
         <Field ru="Одежда" en="OUTFIT" hint={<DoDont yes="одежду, доспех, материал, крой, цвет" no="телосложение, лицо, эмоцию, позу/ракурс/фон" />}>
-          <PromptField value={outfit.prompt} rows={2} layer="Одежда" />
+          <PromptField value={prompt} onChange={setPrompt} rows={2} layer="Одежда" />
         </Field>
         <div className="notice" style={{ marginTop: 4, marginBottom: 14 }}>
           <span className="ic">📏</span>
-          <span className="tx">Важно получить героя в <b>полный рост без обрезки</b> — от макушки до обуви целиком в кадре.</span>
+          <span className="tx">Важно получить героя в <b>полный рост без обрезки</b> — от макушки до обуви целиком в кадре. Описание применится при следующей генерации.</span>
         </div>
-        <label className={"toggle" + (complex ? " on" : "")} onClick={(e) => {e.preventDefault();setComplex(!complex);}}>
+        <label className={"toggle" + (outfit.complex ? " on" : "")} onClick={(e) => { e.preventDefault(); toggleComplex(); }}>
           <span className="tr"></span>
           <span style={{ fontWeight: 700, fontSize: 14 }}>Сложный наряд</span>
           <span className="muted" style={{ fontSize: 12.5, marginLeft: 4 }}>— включите для костюмов с мелкими деталями: добавит кадр в профиль + блок «Детали костюма»</span>
@@ -148,76 +164,89 @@ function OutfitBuilder({ ctx, outfit, complex, setComplex, details, setDetails, 
       </Panel>
 
       <Panel title="Кадры наряда" icon="🖼">
-        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>У каждого кадра — своя генерация и своя сцена. <span style={{ color: "var(--red)" }}>*</span> — обязательные.</p>
-        <div className="pv-grid" style={{ gridTemplateColumns: complex ? "repeat(3,1fr)" : "repeat(2,1fr)" }}>
-          {frames.map((f) => <SceneCard key={f.key} frame={f} onStateChange={onCardState} onArchive={archiveFrame} />)}
+        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>У каждого кадра — своя генерация. <span style={{ color: "var(--red)" }}>*</span> — обязательные (Фас и Спина).</p>
+        <div className="pv-grid" style={{ gridTemplateColumns: outfit.complex ? "repeat(3,1fr)" : "repeat(2,1fr)" }}>
+          {outfit.scenes.map((s) => {
+            const m = SCENE_META[s.scene] || {};
+            return <SceneCard key={s.scene} id={id} index={outfit.index} scene={s} label={m.label} fig={m.fig} req={m.req} getGen={() => prompt} onUpdate={onUpdate} register={register} />;
+          })}
         </div>
-        {archived > 0 && <p className="muted" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>🗑 Отправлено в архив за эту сессию: <b>{archived}</b> — лежат в папке <span className="mono">rejected/</span>.</p>}
       </Panel>
 
-
-      {complex &&
-      <Panel title="Детали костюма" icon="🔍" badge={<span className="badge opt">крупный план</span>}>
-          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>Макро-кадр детали (узор, пряжка, гравировка). Герой тут не нужен — только костюм и стиль.</p>
-          <Help title="Из чего собирается промт?" defaultOpen={false}>
-            <p>Чтобы деталь была <b>в том же стиле и из того же костюма</b>, ИИ собирает промт из слоёв:
-              <b> стиль</b> (манера рисунка) + <b>костюм</b> (материал, цвет) + <b>ваша деталь</b> +
-              <b> макро-рамка</b> (крупный план, чистый фон, свет) и запрет рисовать человека.</p>
-            <p>Вам достаточно описать <b>только саму деталь</b> — остальное подставится автоматически.
-              Кнопка <b>✦ Собрать промт</b> отдаёт это ИИ, чтобы он аккуратно свёл всё в один кадр.</p>
-          </Help>
-          {details.map((d, i) =>
-        <div className="panel soft" key={d.id} style={{ marginBottom: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 130px", gap: 14, alignItems: "start" }}>
-                <div>
-                  <Field ru={"Деталь " + (i + 1)} en="" hint={<DoDont yes="что за деталь крупным планом: гравировка, пряжка, узор" no="лицо/тело героя, позу, фон" />}>
-                    <PromptField value={d.prompt} rows={2} layer="Деталь" />
-                  </Field>
-                  <div className="assembled">
-                    <div className="assembled-h">Сборный промт кадра <span className="muted" style={{ fontWeight: 400 }}>— подставляется автоматически</span></div>
-                    <div className="chiprow">
-                      <span className="pchip style">стиль: ink line + watercolour</span>
-                      <span className="pchip outfit">костюм: ornate plate armor, crimson cloak</span>
-                      <span className="pchip detail">деталь: {d.prompt || "—"}</span>
-                      <span className="pchip frame">макро: close-up, product shot, plain bg, soft light</span>
-                      <span className="pchip excl">без человека / лица / рук</span>
-                    </div>
-                  </div>
-                  <div className="btnrow" style={{ marginTop: 10 }}>
-                    <button className="btn sm">Сгенерировать</button>
-                    <AIButton small onClick={() => {}}>Собрать промт</AIButton>
-                    <button className="btn warn sm" onClick={() => setDetails(details.filter((x) => x.id !== d.id))}>Удалить</button>
-                  </div>
-                </div>
-                <div className="pv-col">
-                  <div className="pv-title">превью</div>
-                  <div className="pv empty" style={{ minHeight: 100 }}><Figure kind="item" size={36} /></div>
-                </div>
-              </div>
-            </div>
-        )}
-          <div className="addrow" style={{ padding: 10, border: "1.5px dashed var(--line-2)", borderRadius: 8 }} onClick={() => setDetails([...details, { id: Date.now(), prompt: "", st: "empty" }])}>+ добавить деталь</div>
-        </Panel>
-      }
+      {outfit.complex && <OutfitDetails id={id} outfit={outfit} onUpdate={onUpdate} />}
 
       <div style={{ marginTop: 22 }}>
         {!canNext &&
-        <div className="notice" style={{ marginBottom: 14 }} data-comment-anchor="3096dd5728-div-155-9">
+          <div className="notice" style={{ marginBottom: 14 }}>
             <span className="ic">⏭</span>
             <span className="tx">Пока не сгенерированы <b>Фас</b> и <b>Спина</b> в полный рост, система не сможет использовать
               этот наряд для героя — <b>при выгрузке он будет пропущен</b>. Можно догенерить недостающее или пропустить наряд.</span>
             <button className="btn sm" style={{ marginLeft: "auto", whiteSpace: "nowrap" }} onClick={genMissing}>Сгенерировать недостающие</button>
-          </div>
-        }
+          </div>}
         <div className="btnrow split">
           <button className="btn ghost" onClick={() => ctx.go("emotions")}>← Назад</button>
           {canNext
-            ? <button className="btn approve" onClick={() => ctx.go("props")}>Согласовать наряд →</button>
+            ? <button className="btn approve" onClick={approveNext}>Согласовать наряд →</button>
             : <button className="btn warn" onClick={() => ctx.go("props")} title="Наряд без фас+спины будет пропущен при выгрузке">Пропустить наряд →</button>}
         </div>
       </div>
     </div>);
+}
 
+/* costume-detail block for a complex outfit */
+function OutfitDetails({ id, outfit, onUpdate }) {
+  async function add() {
+    if (!id) return;
+    try { const d = await window.api.outfitDetail(id, "add", { index: outfit.index }); onUpdate && d.outfits && onUpdate(d.outfits); } catch (e) { /* ignore */ }
+  }
+  async function del(n) {
+    if (!id) return;
+    try { const d = await window.api.outfitDetail(id, "delete", { index: outfit.index, n: n }); onUpdate && d.outfits && onUpdate(d.outfits); } catch (e) { /* ignore */ }
+  }
+  return (
+    <Panel title="Детали костюма" icon="🔍" badge={<span className="badge opt">крупный план</span>}>
+      <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>Макро-кадр детали (узор, пряжка, гравировка). Герой тут не нужен — только костюм и стиль; промт собирается автоматически.</p>
+      {outfit.details.map((d) => <OutfitDetailRow key={d.n} id={id} index={outfit.index} detail={d} onUpdate={onUpdate} onDelete={() => del(d.n)} />)}
+      <div className="addrow" style={{ padding: 10, border: "1.5px dashed var(--line-2)", borderRadius: 8 }} onClick={add}>+ добавить деталь</div>
+    </Panel>
+  );
+}
+
+function OutfitDetailRow({ id, index, detail, onUpdate, onDelete }) {
+  const [prompt, setPrompt] = useS3(detail.prompt || "");
+  const [st, setSt] = useS3(detail.has_image ? "ready" : "empty");
+  const [v, setV] = useS3(0);
+  React.useEffect(() => { setSt(detail.has_image ? "ready" : "empty"); }, [detail.has_image]);
+  async function gen() {
+    if (window.__bumpCost) window.__bumpCost(8);
+    if (!id) { setSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setSt("ready"); return; }
+    setSt("gen");
+    try { const d = await window.api.outfitDetail(id, "generate", { index: index, n: detail.n, prompt: prompt }); setV((x) => x + 1); setSt(d.ok ? "ready" : "empty"); onUpdate && d.outfits && onUpdate(d.outfits); } catch (e) { setSt("empty"); }
+  }
+  const imgSrc = id && st === "ready" ? window.api.imageUrl(id, detail.step_key, v) : null;
+  return (
+    <div className="panel soft" style={{ marginBottom: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 130px", gap: 14, alignItems: "start" }}>
+        <div>
+          <Field ru={"Деталь " + detail.n} en="" hint={<DoDont yes="что за деталь крупным планом: гравировка, пряжка, узор" no="лицо/тело героя, позу, фон" />}>
+            <PromptField value={prompt} onChange={setPrompt} rows={2} layer="Деталь" />
+          </Field>
+          <div className="btnrow" style={{ marginTop: 10 }}>
+            <button className="btn sm" onClick={gen}>{st === "ready" ? "↻ Заново" : "Сгенерировать"}</button>
+            <button className="btn warn sm" onClick={onDelete}>Удалить</button>
+          </div>
+        </div>
+        <div className="pv-col">
+          <div className="pv-title">превью</div>
+          <div className={"pv " + (st === "ready" ? "ready" : st === "gen" ? "gen" : "empty")} style={{ minHeight: 100 }}>
+            {st === "gen" ? <div className="pv-spin"></div>
+              : imgSrc ? <img src={imgSrc} alt={"деталь " + detail.n} style={{ maxWidth: "100%", maxHeight: 90, borderRadius: 6, objectFit: "contain" }} onError={(e) => { e.target.style.display = "none"; }} />
+                : <Figure kind="item" size={36} />}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* =========================================================
