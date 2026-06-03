@@ -46,6 +46,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
+from create_char_passport.ai.review import apply_step_prompt, check_step, edit_character
 from create_char_passport.gen import SceneId
 from create_char_passport.screens.router import ScreenId, WizardSession, resume_screen
 from create_char_passport.state import (
@@ -56,6 +57,7 @@ from create_char_passport.state import (
     OutfitEntry,
     PropEntry,
     PropShot,
+    StepRecord,
     emotion_step,
     normalize_character_table,
     outfit_detail_step,
@@ -172,6 +174,25 @@ class TranslateRequest(BaseModel):
 
     text: str = ""
     layer: str = ""
+
+
+class CheckRequest(BaseModel):
+    """Body of ``POST /api/character/{id}/check`` — the step to review."""
+
+    step_key: str
+
+
+class StepPromptRequest(BaseModel):
+    """Body of accept actions — write ``prompt`` into ``step_key``'s field."""
+
+    step_key: str
+    prompt: str = ""
+
+
+class EditRequest(BaseModel):
+    """Body of ``POST /api/character/{id}/edit`` — the free-form edit request."""
+
+    request: str = ""
 
 
 class AnketaRequest(BaseModel):
@@ -865,6 +886,90 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
                 "base_emotion": state.emotions.base_emotion.value,
             },
         }
+
+    @app.post("/api/character/{character_id}/check")
+    def ai_check(
+        character_id: str, body: CheckRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """«Проверить с ИИ» one step: returns a justification + an optional new prompt."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        record = state.steps.get(body.step_key)
+        preview = None
+        if record and record.last_path:
+            path = character_asset(character_id, record.last_path)
+            preview = str(path) if path.is_file() else None
+        meter = CostLedger()
+        try:
+            outcome = check_step(state, body.step_key, preview, meter=meter)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="not a reviewable step") from exc
+        state.cost.merge(meter)
+        sess.cost.merge(meter)
+        save_state(state)
+        return {
+            "justification": outcome.justification,
+            "new_prompt": outcome.new_prompt,
+            "step_key": outcome.step_key,
+            "ok": outcome.ok,
+        }
+
+    @app.post("/api/character/{character_id}/check/accept")
+    def ai_check_accept(
+        character_id: str, body: StepPromptRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Apply a check's proposed prompt into the step's field."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        applied = apply_step_prompt(state, body.step_key, body.prompt)
+        save_state(state)
+        return {"applied": applied, "character": _character_payload(state)}
+
+    @app.post("/api/character/{character_id}/edit")
+    def ai_edit(
+        character_id: str, body: EditRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """«Правка с ИИ» over the whole character: returns per-step proposed edits."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        meter = CostLedger()
+        outcome = edit_character(state, body.request or "", meter=meter)
+        state.cost.merge(meter)
+        sess.cost.merge(meter)
+        save_state(state)
+        return {
+            "blocks": [
+                {
+                    "step_key": b.step_key,
+                    "justification": b.justification,
+                    "new_prompt": b.new_prompt,
+                }
+                for b in outcome.blocks
+            ],
+            "note": outcome.note,
+            "ok": outcome.ok,
+        }
+
+    @app.post("/api/character/{character_id}/edit/accept")
+    def ai_edit_accept(
+        character_id: str, body: StepPromptRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Apply one edit block: write the prompt + raise the step's need_regen gate."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        applied = apply_step_prompt(state, body.step_key, body.prompt)
+        if applied:
+            state.steps.setdefault(body.step_key, StepRecord()).need_regen = True
+        save_state(state)
+        return {"applied": applied, "character": _character_payload(state)}
 
     @app.get("/api/character/{character_id}/passport")
     def passport(character_id: str, request: Request, response: Response) -> dict[str, Any]:

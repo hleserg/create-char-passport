@@ -289,6 +289,70 @@ def test_compose_not_found_404(client: TestClient) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# AI check / edit (#1/#14)
+# --------------------------------------------------------------------------- #
+def test_ai_check_and_accept(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from create_char_passport.ai.review import CheckOutcome
+
+    cid = _make_character(client, monkeypatch)
+    monkeypatch.setattr(
+        webapp,
+        "check_step",
+        lambda state, step_key, preview=None, meter=None: CheckOutcome(
+            "слово calm — это эмоция, убрал", "weathered square face", step_key, ok=True
+        ),
+    )
+    res = client.post(f"/api/character/{cid}/check", json={"step_key": "passport_face"}).json()
+    assert res["new_prompt"] == "weathered square face"
+    assert res["ok"] is True
+    acc = client.post(
+        f"/api/character/{cid}/check/accept",
+        json={"step_key": "passport_face", "prompt": "weathered square face"},
+    ).json()
+    assert acc["applied"] is True
+    loaded = load_state(cid)
+    assert loaded is not None
+    assert loaded.prompt_layers.face == "weathered square face"
+
+
+def test_ai_check_bad_step_400(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    cid = _make_character(client, monkeypatch)
+    assert client.post(f"/api/character/{cid}/check", json={"step_key": "nope"}).status_code == 400
+
+
+def test_ai_edit_and_accept(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from create_char_passport.ai.review import EditBlock, EditOutcome
+
+    cid = _make_character(client, monkeypatch)
+    monkeypatch.setattr(
+        webapp,
+        "edit_character",
+        lambda state, request, meter=None: EditOutcome(
+            [EditBlock("passport_face", "сделал суровее", "grim weathered face")], "", ok=True
+        ),
+    )
+    res = client.post(f"/api/character/{cid}/edit", json={"request": "сделай его суровее"}).json()
+    assert res["blocks"][0]["step_key"] == "passport_face"
+    acc = client.post(
+        f"/api/character/{cid}/edit/accept",
+        json={"step_key": "passport_face", "prompt": "grim weathered face"},
+    ).json()
+    assert acc["applied"] is True
+    loaded = load_state(cid)
+    assert loaded is not None
+    assert loaded.prompt_layers.face == "grim weathered face"
+    assert loaded.steps["passport_face"].need_regen is True
+
+
+def test_ai_check_edit_404(client: TestClient) -> None:
+    assert (
+        client.post("/api/character/ghost/check", json={"step_key": "passport_face"}).status_code
+        == 404
+    )
+    assert client.post("/api/character/ghost/edit", json={"request": "x"}).status_code == 404
+
+
+# --------------------------------------------------------------------------- #
 # passport: serialize / generate / approve / image
 # --------------------------------------------------------------------------- #
 def _fake_gen_ok(layers, refs, outfit_conflict=False, *, output_path, model=None, meter=None):
