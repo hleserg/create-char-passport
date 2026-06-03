@@ -54,6 +54,10 @@
     extract(text) {
       return jsonFetch("/api/extract", { method: "POST", body: JSON.stringify({ text: text }) });
     },
+    /* RU description -> EN layer prompt (+ other-layer suggestions) */
+    translate(text, layer) {
+      return jsonFetch("/api/translate", { method: "POST", body: JSON.stringify({ text: text, layer: layer }) });
+    },
     /* pick an extracted draft -> create + persist the character ({character}) */
     createCharacter(name) {
       return jsonFetch("/api/character", { method: "POST", body: JSON.stringify({ name: name }) });

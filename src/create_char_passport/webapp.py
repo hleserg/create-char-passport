@@ -87,6 +87,7 @@ from create_char_passport.wizard import (
     set_style_ref,
     sync_outfits,
     sync_props,
+    translate_layer,
 )
 from create_char_passport.wizard.emotions import (
     generate_base_emotion,
@@ -164,6 +165,13 @@ class CreateRequest(BaseModel):
     """Body of ``POST /api/character`` — the picked extracted character's name."""
 
     name: str = ""
+
+
+class TranslateRequest(BaseModel):
+    """Body of ``POST /api/translate`` — Russian text + the target layer label."""
+
+    text: str = ""
+    layer: str = ""
 
 
 class AnketaRequest(BaseModel):
@@ -747,6 +755,19 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             for i, ec in enumerate(sess.extracted_characters)
         ]
         return {"characters": characters, "cost": _cost_payload(sess.cost)}
+
+    @app.post("/api/translate")
+    def translate(body: TranslateRequest, request: Request, response: Response) -> dict[str, Any]:
+        """RU -> EN layer prompt (+ other-layer spillover hints). Bills the session."""
+        sess = _get_session(request, response)
+        meter = CostLedger()
+        result = translate_layer(body.text or "", body.layer or "", meter=meter)
+        sess.cost.merge(meter)
+        return {
+            "text": result.text,
+            "suggestions": result.suggestions,
+            "cost": _cost_payload(sess.cost),
+        }
 
     @app.post("/api/character")
     def create_character(

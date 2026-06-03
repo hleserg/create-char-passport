@@ -54,6 +54,10 @@ from create_char_passport.wizard.style import (
     draft_style_prompt,
     set_style_ref,
 )
+from create_char_passport.wizard.translate import (
+    Translation,
+    translate_layer,
+)
 
 __all__ = [
     "BASE_EMOTION_PRESETS",
@@ -64,6 +68,7 @@ __all__ = [
     "EmotionPreset",
     "ExtractedCharacter",
     "SavedCharacter",
+    "Translation",
     "apply_style",
     "apply_table",
     "base_outfit_display",
@@ -86,5 +91,6 @@ __all__ = [
     "sync_outfits",
     "sync_props",
     "table_from_state",
+    "translate_layer",
     "value_for_label",
 ]
