@@ -13,6 +13,10 @@ Gradio screens in :mod:`create_char_passport.screens` wire thin event handlers
 on top of these functions.
 """
 
+from create_char_passport.wizard.compose import (
+    ComposedLayers,
+    compose_layers,
+)
 from create_char_passport.wizard.extraction import (
     EXTRACTION_PROMPT,
     ExtractedCharacter,
@@ -56,6 +60,7 @@ __all__ = [
     "BASE_OUTFIT_PLACEHOLDER",
     "EXTRACTION_PROMPT",
     "STYLE_PROMPT",
+    "ComposedLayers",
     "EmotionPreset",
     "ExtractedCharacter",
     "SavedCharacter",
@@ -64,6 +69,7 @@ __all__ = [
     "base_outfit_display",
     "build_extraction_prompt",
     "character_from_extracted",
+    "compose_layers",
     "draft_style_prompt",
     "emotion_rows",
     "extract_characters",

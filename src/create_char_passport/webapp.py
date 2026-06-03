@@ -76,6 +76,7 @@ from create_char_passport.wizard import (
     apply_style,
     apply_table,
     character_from_extracted,
+    compose_layers,
     draft_style_prompt,
     set_base_emotion,
     set_emotions_enabled,
@@ -176,6 +177,13 @@ class AnketaRequest(BaseModel):
     emotions: dict[str, Any] = Field(default_factory=dict)
     outfits: dict[str, Any] = Field(default_factory=dict)
     props: dict[str, Any] = Field(default_factory=dict)
+
+
+class ComposeRequest(BaseModel):
+    """Body of ``POST /api/character/{id}/compose`` — optional current card edits."""
+
+    card: dict[str, str] = Field(default_factory=dict)
+    marks: str = ""
 
 
 class PassportGenRequest(BaseModel):
@@ -771,6 +779,48 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         sync_props(state, [[p.get("name", "")] for p in (body.props.get("list") or [])])
         save_state(state)
         return {"character": _character_payload(state)}
+
+    @app.post("/api/character/{character_id}/compose")
+    def compose(
+        character_id: str, body: ComposeRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """LLM-compose FACE/BODY/OUTFIT/base-emotion drafts from the trait table (#13).
+
+        Applies the current card edits first, then seeds the editable layer drafts
+        (never the frozen ones — FACE after passport-face approval, BODY after
+        passport-body, OUTFIT after the base outfit is frozen). Bills the ledgers.
+        """
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        if body.card:
+            apply_table(state, {**body.card, "details": body.marks})
+        meter = CostLedger()
+        composed = compose_layers(state.character_table, meter=meter)
+        state.cost.merge(meter)
+        sess.cost.merge(meter)
+        face_frozen = bool((r := state.steps.get("passport_face")) and r.approved_path)
+        body_frozen = bool((r := state.steps.get("passport_body")) and r.approved_path)
+        if composed.face and not face_frozen:
+            state.prompt_layers.face = composed.face
+        if composed.body and not body_frozen:
+            state.prompt_layers.body = composed.body
+        if composed.outfit and not state.base_outfit.frozen:
+            state.base_outfit.prompt = composed.outfit
+        if composed.base_emotion:
+            state.emotions.base_emotion.value = composed.base_emotion
+            state.emotions.base_emotion.enabled = True
+        save_state(state)
+        return {
+            "character": _character_payload(state),
+            "layers": {
+                "face": state.prompt_layers.face,
+                "body": state.prompt_layers.body,
+                "outfit": state.base_outfit.prompt,
+                "base_emotion": state.emotions.base_emotion.value,
+            },
+        }
 
     @app.get("/api/character/{character_id}/passport")
     def passport(character_id: str, request: Request, response: Response) -> dict[str, Any]:

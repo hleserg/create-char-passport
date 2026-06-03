@@ -62,6 +62,13 @@
     getCharacter(id) {
       return jsonFetch("/api/character/" + encodeURIComponent(id));
     },
+    /* LLM-compose FACE/BODY/OUTFIT/base-emotion drafts from the trait card */
+    composeLayers(id, card, marks) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/compose", {
+        method: "POST",
+        body: JSON.stringify({ card: card, marks: marks }),
+      });
+    },
     /* persist the edited anketa -> ({character}) */
     saveAnketa(id, anketa) {
       return jsonFetch("/api/character/" + encodeURIComponent(id) + "/anketa", {

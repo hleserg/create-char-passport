@@ -312,7 +312,19 @@ function ScreenData({ ctx }) {
     hair: "чёрные, до плеч", eyes: "тёмные", skin: "загорелая, обветренная", role: "наёмник, воин",
   });
   const [marks, setMarks] = useS1("шрам на левой щеке, выцветшая татуировка на левом предплечье");
+  const [composed, setComposed] = useS1(null);
   function setF(k, v) { setCard((c) => ({ ...c, [k]: v })); }
+
+  // «Разобрать по промтам с ИИ»: persist current card + marks, then LLM-compose
+  // the FACE/BODY/OUTFIT/base-emotion layer drafts from the table (returns Promise
+  // so the AI button shimmers for the real round-trip).
+  async function doCompose() {
+    if (!ctx.activeCharId) return;
+    try {
+      const d = await window.api.composeLayers(ctx.activeCharId, card, marks);
+      if (d.layers) setComposed(d.layers);
+    } catch (e) { /* offline preview: ignore */ }
+  }
 
   // Seed the whole form from the persisted character (degrades to the sample
   // defaults above when there is no backend / no active id).
@@ -444,6 +456,22 @@ function ScreenData({ ctx }) {
             </div>
           </div>
           <p className="tip" style={{ marginTop: 11 }}><span className="ic">→</span><span>Возраст/волосы/глаза/кожа собираются в <b>FACE</b>, пол/телосложение — в <b>BODY</b>; на «Паспорте» вы их проверите и <b>заморозите</b> 🔒. <b>Роль/статус</b> не входит во внешность — он подмешивается в слой <b>COMPOSITION</b> на кадрах сцен как «манера держаться» (осанка, подача), поэтому в паспорте его не видно, а в сценах — да. Можно оставить пустым.</span></p>
+
+          <div className="btnrow" style={{ marginTop: 14 }}>
+            <AIButton onClick={doCompose}>Разобрать по промтам с ИИ</AIButton>
+            <span className="muted" style={{ fontSize: 12 }}>ИИ соберёт из анкеты промты слоёв (лицо, тело, одежда, базовая эмоция); приметы разнесёт по слоям</span>
+          </div>
+          {composed && (
+            <div className="assembled" style={{ marginTop: 12 }}>
+              <div className="assembled-h">Готовые промты слоёв <span className="muted" style={{ fontWeight: 400 }}>— разобрано ИИ, заморозятся на паспорте</span></div>
+              {[["Лицо", "FACE", composed.face], ["Тело", "BODY", composed.body], ["Одежда", "OUTFIT", composed.outfit], ["Базовая эмоция", "EXPRESSION", composed.base_emotion]].map((row) => (
+                <div key={row[1]} style={{ marginBottom: 7 }}>
+                  <div className="lyr-row-h"><b>{row[0]}</b> <span className="mono" style={{ fontSize: 10, color: "var(--ink-3)" }}>{row[1]}</span></div>
+                  <div className="mono" style={{ fontSize: 12, color: "var(--ink-2)", whiteSpace: "pre-wrap", marginTop: 2 }}>{row[2] || "—"}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </Panel>
 
