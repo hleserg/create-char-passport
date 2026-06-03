@@ -21,10 +21,13 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_REPO = "hleserg/create-char-passport-web"
-# HF Storage Bucket mounted read-write at /data so all character state + the
-# project _style/ persist across Space restarts/rebuilds (APP_BUCKET_PATH=/data).
-DEFAULT_BUCKET = "hleserg/create-char-passport-storage"
+# Production Space (under the atmanai-dev org so it can be shared with members).
+DEFAULT_REPO = "atmanai-dev/create-char-passport"
+# The HF Storage Bucket is already mounted read-write at /data on the Space
+# (one-time setup; APP_BUCKET_PATH=/data). Default to NOT re-mounting on every
+# deploy — pass --bucket hleserg/create-char-passport-storage only for first-time
+# setup of a fresh Space. Routine deploys just push code.
+DEFAULT_BUCKET = ""
 BUCKET_MOUNT = "/data"
 # (local path, path in the Space repo)
 FILES: tuple[tuple[str, str], ...] = (
