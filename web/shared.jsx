@@ -88,17 +88,26 @@ const PHASES = [
   { key: "props", num: "5", lbl: "Предметы", sub: "финал" },
 ];
 
-function Stepper({ current, done, onNav }) {
+function Stepper({ current, done, onNav, locked }) {
   return (
     <div className="stepper">
       {PHASES.map((p, i) => {
+        const isStart = p.key === "start";
+        // Until a character is chosen, every step past «Старт» is frozen — the
+        // anketa and everything after belong to a specific character.
+        const isLocked = locked && !isStart;
         const isDone = done.includes(p.key);
         const isCur = current === p.key;
-        const cls = "step" + (isCur ? " current" : "") + (isDone && !isCur ? " done" : "");
+        const cls = "step" + (isCur ? " current" : "") + (isDone && !isCur ? " done" : "") + (isLocked ? " locked" : "");
         return (
           <React.Fragment key={p.key}>
-            <div className={cls} onClick={() => onNav && onNav(p.key)}>
-              <span className="num">{isDone && !isCur ? Ico.check : p.num}</span>
+            <div
+              className={cls}
+              style={isLocked ? { opacity: 0.4, cursor: "not-allowed" } : null}
+              title={isLocked ? "Сначала выберите или создайте героя на «Старте»" : undefined}
+              onClick={() => { if (!isLocked && onNav) onNav(p.key); }}
+            >
+              <span className="num">{isLocked ? "🔒" : isDone && !isCur ? Ico.check : p.num}</span>
               <span>
                 <span className="lbl" style={{ display: "block" }}>{p.lbl}</span>
                 <span className="sub">{p.sub}</span>

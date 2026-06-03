@@ -55,6 +55,19 @@ function ScreenStart({ ctx }) {
   const [book, setBook] = useS1(null); // {name, chars} when a big book is loaded (textarea frozen)
   const [fileErr, setFileErr] = useS1("");
   const [name, setName] = useS1(""); // create-by-name (primary path)
+  const [showArchive, setShowArchive] = useS1(false);
+
+  function setRowArchived(id, archived) {
+    setSaved((rows) => rows.map((r) => (r.id === id ? { ...r, archived } : r)));
+  }
+  async function archiveChar(c) {
+    setRowArchived(c.id, true); // optimistic
+    try { await window.api.setArchived(c.id, true); } catch (e) { setRowArchived(c.id, false); }
+  }
+  async function restoreChar(c) {
+    setRowArchived(c.id, false);
+    try { await window.api.setArchived(c.id, false); } catch (e) { setRowArchived(c.id, true); }
+  }
 
   // Bootstrap from the backend (session + saved characters + project style).
   // Degrades silently to sample data when no backend is present (static preview).
@@ -364,27 +377,54 @@ function ScreenStart({ ctx }) {
       </Panel>
 
       {/* SAVED CHARACTERS */}
-      <Panel title="Сохранённые герои" icon="🗂" className="" badge={<span className="badge ro">из вашего архива</span>}>
-        <p className="muted" style={{ marginTop: 0, fontSize: 13.5 }}>Можно вернуться к тому, кого уже начали. Мы откроем его ровно на том шаге, где вы остановились.</p>
-        <table className="t">
-          <thead><tr><th>Имя</th><th>Статус</th><th style={{ width: 230 }}></th></tr></thead>
-          <tbody>
-            {saved.map((c) => (
-              <tr key={c.id}>
-                <td style={{ fontWeight: 700 }}>{c.name}</td>
-                <td>{c.status === "готов" ? <span className="badge done">✓ готов</span> : <span className="badge now">{c.status}</span>}</td>
-                <td>
-                  <div className="btnrow" style={{ justifyContent: "flex-end", gap: 8 }}>
-                    {c.status === "готов" && (
-                      <button className="btn ghost sm" title="Скачать ZIP-архив героя (кадры + промты)" onClick={() => { window.location.href = window.api.archiveUrl(c.id); }}>⬇ Скачать</button>
-                    )}
-                    <button className="btn ghost sm" onClick={() => { ctx.setActiveChar(c.name); ctx.setActiveCharId(c.id); ctx.go(c.step || "data"); }}>Открыть →</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <Panel title="Сохранённые герои" icon="🗂" className="" badge={<span className="badge ro">ваши герои</span>}>
+        <p className="muted" style={{ marginTop: 0, fontSize: 13.5 }}>Можно вернуться к тому, кого уже начали. Мы откроем его ровно на том шаге, где вы остановились. Лишних — в архив (вернуть можно в любой момент).</p>
+        {(() => {
+          const active = saved.filter((c) => !c.archived);
+          const archived = saved.filter((c) => c.archived);
+          const open = (c) => { ctx.setActiveChar(c.name); ctx.setActiveCharId(c.id); ctx.go(c.step || "data"); };
+          const row = (c, isArch) => (
+            <tr key={c.id}>
+              <td style={{ fontWeight: 700 }}>{c.name}</td>
+              <td>{c.status === "готов" ? <span className="badge done">✓ готов</span> : <span className="badge now">{c.status}</span>}</td>
+              <td>
+                <div className="btnrow" style={{ justifyContent: "flex-end", gap: 8 }}>
+                  {c.status === "готов" && (
+                    <button className="btn ghost sm" title="Скачать ZIP-архив героя (кадры + промты)" onClick={() => { window.location.href = window.api.archiveUrl(c.id); }}>⬇ Скачать</button>
+                  )}
+                  <button className="btn ghost sm" onClick={() => open(c)}>Открыть →</button>
+                  {isArch
+                    ? <button className="btn ghost sm" title="Вернуть из архива" onClick={() => restoreChar(c)}>↩ вернуть</button>
+                    : <button className="btn ghost sm" title="Убрать в архив — можно вернуть" onClick={() => archiveChar(c)}>🗄 в архив</button>}
+                </div>
+              </td>
+            </tr>
+          );
+          return (
+            <>
+              {active.length === 0 ? (
+                <p className="muted" style={{ fontSize: 13 }}>Активных героев пока нет — создайте нового выше.</p>
+              ) : (
+                <table className="t">
+                  <thead><tr><th>Имя</th><th>Статус</th><th style={{ width: 320 }}></th></tr></thead>
+                  <tbody>{active.map((c) => row(c, false))}</tbody>
+                </table>
+              )}
+              {archived.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <button className="btn ghost sm" onClick={() => setShowArchive((v) => !v)}>
+                    🗄 Архив ({archived.length}) {showArchive ? "▲" : "▼"}
+                  </button>
+                  {showArchive && (
+                    <table className="t" style={{ marginTop: 8, opacity: 0.8 }}>
+                      <tbody>{archived.map((c) => row(c, true))}</tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </Panel>
 
       {confirmReset && (

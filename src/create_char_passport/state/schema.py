@@ -271,6 +271,9 @@ class CharacterState:
     scene_overrides: dict[str, str] = field(default_factory=dict)
     # Running API spend attributed to this character (image-gen + LLM).
     cost: CostLedger = field(default_factory=CostLedger)
+    # Soft-archive flag: archived characters are hidden from the main saved list
+    # (moved to an «Архив» section) but never deleted — restorable, like outfits.
+    archived: bool = False
 
 
 def blank_state(name: str, character_id: str | None = None) -> CharacterState:
@@ -400,4 +403,5 @@ def state_from_dict(data: dict[str, Any]) -> CharacterState:
         # ``dict[str, str]`` shape rather than trusting the JSON types.
         scene_overrides={str(k): str(v) for k, v in (data.get("scene_overrides") or {}).items()},
         cost=_cost_ledger(data.get("cost")),
+        archived=bool(data.get("archived", False)),
     )

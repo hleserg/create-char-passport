@@ -198,6 +198,12 @@ class CreateRequest(BaseModel):
     outfit: str | None = None
 
 
+class ArchivedRequest(BaseModel):
+    """Body of ``PUT /api/character/{id}/archived`` — the soft-archive flag."""
+
+    archived: bool = True
+
+
 class TranslateRequest(BaseModel):
     """Body of ``POST /api/translate`` — Russian text + the target layer label.
 
@@ -400,6 +406,7 @@ def _saved_payload(state: CharacterState) -> dict[str, Any]:
         "name": state.name or state.character_id,
         "status": _saved_status(state),
         "step": None if ready else _SCREEN_TO_PHASE.get(resume_screen(state), "data"),
+        "archived": bool(state.archived),
     }
 
 
@@ -1122,6 +1129,21 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         if state is None:
             raise HTTPException(status_code=404, detail="character not found")
         return {"character": _character_payload(state)}
+
+    @app.put("/api/character/{character_id}/archived")
+    def set_archived(
+        character_id: str, body: ArchivedRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Soft-archive / restore a character (hidden from the main list, never deleted)."""
+        sess = _get_session(request, response)
+        state = load_state(character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        state.archived = bool(body.archived)
+        save_state(state)
+        if sess.character is not None and sess.character.character_id == character_id:
+            sess.character.archived = state.archived
+        return {"id": character_id, "archived": state.archived}
 
     @app.put("/api/character/{character_id}/anketa")
     def save_anketa(

@@ -98,6 +98,13 @@
     getCharacter(id) {
       return jsonFetch("/api/character/" + encodeURIComponent(id));
     },
+    /* soft-archive / restore a saved character (hidden from the main list) */
+    setArchived(id, archived) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/archived", {
+        method: "PUT",
+        body: JSON.stringify({ archived: !!archived }),
+      });
+    },
     /* LLM-compose FACE/BODY/OUTFIT/base-emotion drafts from the trait card */
     composeLayers(id, card, marks) {
       return jsonFetch("/api/character/" + encodeURIComponent(id) + "/compose", {

@@ -268,6 +268,26 @@ def test_create_character_empty_name_422(client: TestClient, bucket: Path) -> No
     assert client.post("/api/character", json={"name": "  ", "table": {}}).status_code == 422
 
 
+def test_archive_and_restore_character(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    cid = _make_character(client, monkeypatch)
+    r = client.put(f"/api/character/{cid}/archived", json={"archived": True})
+    assert r.status_code == 200 and r.json()["archived"] is True
+    # the saved-list row reflects it, and it persists to the bucket
+    saved = client.get("/api/session").json()["saved_characters"]
+    assert any(c["id"] == cid and c["archived"] is True for c in saved)
+    state = load_state(cid)
+    assert state is not None and state.archived is True
+    # restore
+    r2 = client.put(f"/api/character/{cid}/archived", json={"archived": False})
+    assert r2.json()["archived"] is False
+    restored = load_state(cid)
+    assert restored is not None and restored.archived is False
+
+
+def test_archive_unknown_character_404(client: TestClient, bucket: Path) -> None:
+    assert client.put("/api/character/ghost/archived", json={"archived": True}).status_code == 404
+
+
 def test_create_character_from_posted_draft_without_session(
     client: TestClient, bucket: Path
 ) -> None:
