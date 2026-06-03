@@ -157,6 +157,12 @@
     getProps(id) {
       return jsonFetch("/api/character/" + encodeURIComponent(id) + "/props");
     },
+    propsEnable(id, enabled) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/props/enable", {
+        method: "POST",
+        body: JSON.stringify({ enabled: enabled }),
+      });
+    },
     propShot(id, action, payload) {
       return jsonFetch("/api/character/" + encodeURIComponent(id) + "/props/shot/" + action, {
         method: "POST",

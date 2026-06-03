@@ -361,6 +361,12 @@ function ScreenProps({ ctx }) {
 
   const data = pr || SAMPLE_PROPS;
   const items = data.items;
+  const propsEnabled = pr ? pr.enabled : true;
+
+  async function togglePropsEnabled(next) {
+    if (!id) { setPr((p) => Object.assign({}, p || SAMPLE_PROPS, { enabled: next })); return; }
+    try { const d = await window.api.propsEnable(id, next); if (d.props) setPr(d.props); } catch (e) { /* ignore */ }
+  }
 
   async function doFinish() {
     if (id) {
@@ -388,20 +394,31 @@ function ScreenProps({ ctx }) {
         <p>Магия и эффекты — сюда же: в описании пишете эффект, а не предмет.</p>
       </Help>
 
-      {/* item tabs */}
-      <div className="otabs">
-        {items.map((it, i) => (
-          <button key={it.id} className={"otab" + (i === activeItem ? " on" : "")} onClick={() => setActiveItem(i)}>
-            <span className="otab-nm">{it.name || ("предмет " + it.id)}</span>
-            <span className="badge ro" style={{ fontSize: 9 }}>{it.shots.filter((s) => s.has_image).length}/{it.shots.length} кадр.</span>
-          </button>
-        ))}
-        <button className="otab add" title="Предметы добавляются в анкете героя">+ предмет</button>
+      {/* enable / disable the whole props block */}
+      <div className="panel soft" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", marginBottom: 16 }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>Снимать предметы для этого героя</span>
+        <span className="badge opt">по желанию</span>
+        <span className="spacer" style={{ flex: 1 }}></span>
+        <span className="muted" style={{ fontSize: 12 }}>{propsEnabled ? "включено" : "выключено — кадры не требуются"}</span>
+        <Toggle on={propsEnabled} onToggle={togglePropsEnabled} />
       </div>
 
-      {items[activeItem]
-        ? <PropBuilder key={items[activeItem].id} id={id} item={items[activeItem]} onUpdate={setPr} />
-        : <Panel><p className="center muted" style={{ padding: 30 }}>Нет предметов — их добавляют в анкете героя.</p></Panel>}
+      <div style={{ opacity: propsEnabled ? 1 : 0.45, pointerEvents: propsEnabled ? "auto" : "none" }}>
+        {/* item tabs */}
+        <div className="otabs">
+          {items.map((it, i) => (
+            <button key={it.id} className={"otab" + (i === activeItem ? " on" : "")} onClick={() => setActiveItem(i)}>
+              <span className="otab-nm">{it.name || ("предмет " + it.id)}</span>
+              <span className="badge ro" style={{ fontSize: 9 }}>{it.shots.filter((s) => s.has_image).length}/{it.shots.length} кадр.</span>
+            </button>
+          ))}
+          <button className="otab add" title="Предметы добавляются в анкете героя">+ предмет</button>
+        </div>
+
+        {items[activeItem]
+          ? <PropBuilder key={items[activeItem].id} id={id} item={items[activeItem]} onUpdate={setPr} />
+          : <Panel><p className="center muted" style={{ padding: 30 }}>Нет предметов — их добавляют в анкете героя.</p></Panel>}
+      </div>
 
       <div className="btnrow split" style={{ marginTop: 12 }}>
         <button className="btn ghost" onClick={() => ctx.go("outfit")}>← Назад</button>

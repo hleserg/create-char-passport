@@ -1095,6 +1095,19 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="character not found")
         return {"props": _props_payload(state)}
 
+    @app.post("/api/character/{character_id}/props/enable")
+    def props_enable(
+        character_id: str, body: EnableRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Toggle the props block on/off (props are optional; off -> nothing required)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        set_props_enabled(state, body.enabled)
+        save_state(state)
+        return {"props": _props_payload(state)}
+
     @app.post("/api/character/{character_id}/props/shot/add")
     def prop_shot_add(
         character_id: str, body: PropRequest, request: Request, response: Response
