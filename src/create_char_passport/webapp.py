@@ -53,6 +53,7 @@ from create_char_passport.state import (
     PASSPORT_STEPS,
     CharacterState,
     CostLedger,
+    OutfitEntry,
     emotion_step,
     normalize_character_table,
     outfit_detail_step,
@@ -203,6 +204,12 @@ class BaseEmotionRequest(BaseModel):
     """Body of ``POST /api/character/{id}/emotions/base`` (optional new value)."""
 
     value: str | None = None
+
+
+class EnableRequest(BaseModel):
+    """Body of a simple on/off toggle."""
+
+    enabled: bool = True
 
 
 class OutfitSceneRequest(BaseModel):
@@ -430,6 +437,14 @@ def _emotions_payload(state: CharacterState) -> dict[str, Any]:
             "value": base.value,
             "step_key": BASE_EMOTION_STEP,
             "has_image": bool(base.ref),
+        },
+        # The neutral emotion is NOT generated separately — it's the passport
+        # front portrait. Surfaced so the UI shows it as the first cell.
+        "neutral": {
+            "step_key": "passport_face",
+            "has_image": bool(
+                (rec := state.steps.get("passport_face")) is not None and rec.last_path
+            ),
         },
         "missing": missing_emotion_refs(state),
         "cost": _cost_payload(state.cost),
@@ -827,6 +842,19 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="character not found")
         return {"emotions": _emotions_payload(state)}
 
+    @app.post("/api/character/{character_id}/emotions/enable")
+    def emotions_enable(
+        character_id: str, body: EnableRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Toggle the emotion series on/off (off -> not required for completion)."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        set_emotions_enabled(state, body.enabled)
+        save_state(state)
+        return {"emotions": _emotions_payload(state)}
+
     @app.post("/api/character/{character_id}/emotions/generate")
     def emotions_generate(
         character_id: str, body: EmotionRequest, request: Request, response: Response
@@ -889,6 +917,20 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         state = _load_for_session(sess, character_id)
         if state is None:
             raise HTTPException(status_code=404, detail="character not found")
+        return {"outfits": _outfits_payload(state)}
+
+    @app.post("/api/character/{character_id}/outfits/add")
+    def outfits_add(request: Request, response: Response, character_id: str) -> dict[str, Any]:
+        """Append a new (empty) additional outfit so the user can build it here."""
+        sess = _get_session(request, response)
+        state = _load_for_session(sess, character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        state.outfits_enabled = True
+        used = [int(o.id) for o in state.outfits if o.id.isdigit()]
+        new_id = str(max(used, default=0) + 1)
+        state.outfits.append(OutfitEntry(id=new_id))
+        save_state(state)
         return {"outfits": _outfits_payload(state)}
 
     @app.post("/api/character/{character_id}/outfits/generate")

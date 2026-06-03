@@ -237,6 +237,15 @@ function ScreenPassport({ ctx }) {
       setImgV((v) => v + 1);
       setGen(d.ok ? "ready" : "empty");
       if (!d.ok) setErr(d.error || "Не удалось сгенерировать кадр");
+      window.setLastGen({
+        section: "Паспорт", view: frame.title, model: "nano-banana", size: "1024×1536",
+        layers: { style: (pp && pp.style) || "", face: face, body: step >= 1 ? body : "", outfit: outfit, composition: FRAME_COMP[frame.key] },
+        refs: frame.key === "face"
+          ? [{ label: "стиль-реф", kind: "item" }]
+          : (["profile", "back", "3q"].includes(frame.key)
+            ? [{ label: "стиль-реф", kind: "item" }, { label: "паспорт: фас (FACE)", kind: "front-portrait" }, { label: "паспорт: рост (BODY)", kind: "front-full" }]
+            : [{ label: "стиль-реф", kind: "item" }, { label: "паспорт: фас (FACE)", kind: "front-portrait" }]),
+      });
     } catch (e) { setGen("empty"); setErr("Ошибка сети — попробуйте ещё раз"); }
   }
 
@@ -253,7 +262,8 @@ function ScreenPassport({ ctx }) {
   }
 
   const imgSrc = ctx.activeCharId ? window.api.imageUrl(ctx.activeCharId, serverKey, imgV, 768) : null;
-  const imgStyle = { maxWidth: "100%", maxHeight: ctx.variant === "C" ? 340 : 210, borderRadius: 6, objectFit: "contain" };
+  const imgStyle = { maxWidth: "100%", maxHeight: ctx.variant === "C" ? 340 : 210, borderRadius: 6, objectFit: "contain", cursor: "zoom-in" };
+  const fullImg = () => ctx.activeCharId && window.__lightbox(window.api.imageUrl(ctx.activeCharId, serverKey, imgV));
 
   const previewBlock = (
     <Panel className={ctx.variant === "C" ? "" : "soft"} marks={ctx.variant === "C"}>
@@ -264,7 +274,7 @@ function ScreenPassport({ ctx }) {
             <>
               <span className="pv-badge"><span className="badge done">✓ кадр готов</span></span>
               {imgSrc
-                ? <img src={imgSrc} alt={frame.title} style={imgStyle} onError={(e) => { e.target.style.display = "none"; }} />
+                ? <img src={imgSrc} alt={frame.title} style={imgStyle} onClick={fullImg} onError={(e) => { e.target.style.display = "none"; }} />
                 : <Figure kind={frame.fig} size={ctx.variant === "C" ? 130 : 92} />}
               <span className="pv-cap">{frame.title}</span>
               <span className="pv-sub">нейтральное лицо · серый фон</span>
@@ -372,6 +382,11 @@ function EmotionCell({ item, id, onUpdate }) {
       setV((x) => x + 1);
       setSt(d.ok ? "ready" : "empty");
       onUpdate && d.emotions && onUpdate(d.emotions);
+      window.setLastGen({
+        section: "Эмоции", view: item.value, model: "nano-banana", size: "1024×1024",
+        layers: { expression: item.value, composition: "front facing portrait, head and shoulders, plain neutral grey background, soft even lighting" },
+        refs: [{ label: "стиль-реф", kind: "item" }, { label: "паспорт: фас (FACE)", kind: "front-portrait" }],
+      });
     } catch (e) { setSt("empty"); }
   }
   async function archive() {
@@ -386,7 +401,7 @@ function EmotionCell({ item, id, onUpdate }) {
       <div className="pv-title">{item.value}</div>
       <div className={"pv " + (st === "ready" ? "ready" : st === "gen" ? "gen" : "empty")} style={{ minHeight: 150 }}>
         {st === "gen" ? (<><div className="pv-spin"></div><span className="pv-cap">генерация…</span></>)
-          : st === "ready" ? (<><span className="pv-badge"><span className="badge done">✓</span></span>{imgSrc ? <img src={imgSrc} alt={item.value} style={{ maxWidth: "100%", maxHeight: 130, borderRadius: 6, objectFit: "contain" }} onError={(e) => { e.target.style.display = "none"; }} /> : <Figure kind="front-portrait" size={58} />}</>)
+          : st === "ready" ? (<><span className="pv-badge"><span className="badge done">✓</span></span>{imgSrc ? <img src={imgSrc} alt={item.value} onClick={() => id && window.__lightbox(window.api.imageUrl(id, item.step_key, v))} style={{ maxWidth: "100%", maxHeight: 130, borderRadius: 6, objectFit: "contain", cursor: "zoom-in" }} onError={(e) => { e.target.style.display = "none"; }} /> : <Figure kind="front-portrait" size={58} />}</>)
             : (<><Figure kind="front-portrait" size={58} /><span className="pv-sub">нет кадра</span></>)}
       </div>
       {st === "ready" ? (
@@ -424,6 +439,7 @@ function ScreenEmotions({ ctx }) {
 
   async function genBase() {
     if (window.__bumpCost) window.__bumpCost(8);
+    genBaseDebug();
     if (!ctx.activeCharId) { setBaseSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setBaseSt("ready"); return; }
     setBaseSt("gen");
     try {
@@ -434,9 +450,24 @@ function ScreenEmotions({ ctx }) {
     } catch (e) { setBaseSt("empty"); }
   }
 
+  async function genBaseDebug() {
+    window.setLastGen({
+      section: "Эмоция по умолчанию", view: baseVal, model: "nano-banana", size: "1024×1024",
+      layers: { expression: baseVal, composition: "front facing portrait, head and shoulders, plain neutral grey background, soft even lighting" },
+      refs: [{ label: "стиль-реф", kind: "item" }, { label: "паспорт: фас (FACE)", kind: "front-portrait" }],
+    });
+  }
+  async function toggleEmotions(next) {
+    if (!ctx.activeCharId) { setEmo((e) => Object.assign({}, e || {}, { enabled: next })); return; }
+    try { const d = await window.api.emotionEnable(ctx.activeCharId, next); if (d.emotions) setEmo(d.emotions); } catch (e) { /* ignore */ }
+  }
+
   const cells = emo
     ? emo.items
-    : EMO_ROW.map((e, i) => ({ index: i, value: e.v, step_key: e.v, has_image: false }));
+    : EMO_ROW.slice(1).map((e, i) => ({ index: i, value: e.v, step_key: e.v, has_image: false }));
+  const emoEnabled = emo ? emo.enabled : true;
+  const neutral = emo && emo.neutral;
+  const neutralImg = ctx.activeCharId && neutral && neutral.has_image ? window.api.imageUrl(ctx.activeCharId, "passport_face", 0, 320) : null;
   const baseImg = ctx.activeCharId && baseSt === "ready" ? window.api.imageUrl(ctx.activeCharId, "base_emotion", baseV, 320) : null;
 
   return (
@@ -451,12 +482,23 @@ function ScreenEmotions({ ctx }) {
         <p>Это <b>необязательно</b>. Можно сгенерировать не все — кнопка «Готово» пропустит дальше даже с пустыми ячейками.</p>
       </Help>
 
-      <Panel title="Три базовые эмоции" icon="🎭">
-        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>Под каждой — своя кнопка. Перегенерируется только та эмоция, под которой нажали.</p>
-        <div className="pv-grid" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
-          {cells.map((it) => <EmotionCell key={it.value} item={it} id={ctx.activeCharId} onUpdate={(e) => { setEmo(e); setArchived((n) => n + 1); }} />)}
+      <Panel title="Три базовые эмоции" icon="🎭" badge={<span className="badge opt">по желанию</span>} actions={<Toggle on={emoEnabled} onToggle={toggleEmotions} />}>
+        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>Под каждой — своя кнопка. Перегенерируется только та эмоция, под которой нажали. Если блок выключен — эти кадры не нужны и не требуются для завершения.</p>
+        <div style={{ opacity: emoEnabled ? 1 : 0.45, pointerEvents: emoEnabled ? "auto" : "none" }}>
+          <div className="pv-grid" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
+            <div className="pv-col">
+              <div className="pv-title">neutral<br /><span style={{ fontWeight: 400, textTransform: "none", color: "var(--ink-2)", fontSize: 11 }}>спокойствие · из паспорта</span></div>
+              <div className={"pv " + (neutralImg ? "ready" : "empty")} style={{ minHeight: 150 }}>
+                {neutralImg
+                  ? <><span className="pv-badge"><span className="badge done">✓</span></span><img src={neutralImg} alt="neutral" onClick={() => window.__lightbox(window.api.imageUrl(ctx.activeCharId, "passport_face", 0))} style={{ maxWidth: "100%", maxHeight: 130, borderRadius: 6, objectFit: "contain", cursor: "zoom-in" }} onError={(e) => { e.target.style.display = "none"; }} /></>
+                  : <><Figure kind="front-portrait" size={58} /><span className="pv-sub">сделайте паспорт</span></>}
+              </div>
+              <p className="muted center" style={{ fontSize: 11.5, margin: "6px 0 0" }}>берётся с паспортного портрета</p>
+            </div>
+            {cells.map((it) => <EmotionCell key={it.value} item={it} id={ctx.activeCharId} onUpdate={(e) => { setEmo(e); setArchived((n) => n + 1); }} />)}
+          </div>
+          {archived > 0 && <p className="muted" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>🗑 Отправлено в архив за эту сессию: <b>{archived}</b> — лежат в папке <span className="mono">rejected/</span>.</p>}
         </div>
-        {archived > 0 && <p className="muted" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>🗑 Отправлено в архив за эту сессию: <b>{archived}</b> — лежат в папке <span className="mono">rejected/</span>.</p>}
       </Panel>
 
       <AdvancedScene value="Front facing portrait, head and shoulders, plain neutral grey background, soft even lighting." note={<>Кадры эмоций — крупный <b>портрет</b> (голова и плечи), одна и та же сцена на все три. Меняйте это поле <b>только</b> чтобы поправить план или ракурс (например, если лицо слишком мелкое). Фон и свет лучше не трогать.</>} />
@@ -476,7 +518,7 @@ function ScreenEmotions({ ctx }) {
               <div className="pv-title">превью</div>
               <div className={"pv " + (baseSt === "ready" ? "ready" : baseSt === "gen" ? "gen" : "empty")} style={{ minHeight: 130 }}>
                 {baseSt === "gen" ? <div className="pv-spin"></div>
-                  : baseImg ? <img src={baseImg} alt="база" style={{ maxWidth: "100%", maxHeight: 120, borderRadius: 6, objectFit: "contain" }} onError={(e) => { e.target.style.display = "none"; }} />
+                  : baseImg ? <img src={baseImg} alt="база" onClick={() => window.__lightbox(window.api.imageUrl(ctx.activeCharId, "base_emotion", baseV))} style={{ maxWidth: "100%", maxHeight: 120, borderRadius: 6, objectFit: "contain", cursor: "zoom-in" }} onError={(e) => { e.target.style.display = "none"; }} />
                     : <Figure kind="front-portrait" size={54} />}
               </div>
             </div>
