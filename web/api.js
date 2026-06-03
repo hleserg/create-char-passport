@@ -110,6 +110,24 @@
         body: JSON.stringify(payload),
       });
     },
+    /* props phase -> ({props}) */
+    getProps(id) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/props");
+    },
+    propShot(id, action, payload) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/props/shot/" + action, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+    /* mark the character complete -> ({ok, character}) */
+    finishCharacter(id) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/finish", { method: "POST" });
+    },
+    /* download URL for the finish ZIP (passport.json + approved/ + rejected/) */
+    archiveUrl(id) {
+      return "/api/character/" + encodeURIComponent(id) + "/archive";
+    },
     /* URL of a generated frame image (v busts the cache after a regenerate) */
     imageUrl(id, stepKey, v) {
       return "/api/character/" + encodeURIComponent(id) + "/image/" + encodeURIComponent(stepKey) + "?v=" + (v || 0);

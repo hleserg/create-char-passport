@@ -252,62 +252,92 @@ function OutfitDetailRow({ id, index, detail, onUpdate, onDelete }) {
 /* =========================================================
    PROPS SCREEN
    ========================================================= */
-function PropShot({ n, total, what, prompt, initial, onDelete }) {
-  const [st, setSt] = useS3(initial || "empty");
-  function gen() {if (window.__bumpCost) window.__bumpCost(8);
-    if (window.setLastGen) window.setLastGen({ section: "Предмет", view: what || ("кадр " + n),
-      layers: {
-        style: "graphic novel, bold ink linework, muted watercolour wash, dramatic chiaroscuro lighting",
-        item: prompt,
-        composition: "product shot, centered, plain neutral background, soft even studio lighting" },
-      refs: [{ label: "стиль-реф", kind: "item" }],
-      model: "nano-banana", size: "1024×1024" });
-    setSt("gen");setTimeout(() => setSt("ready"), 1000);}
+function PropShot({ id, index, shot, total, onUpdate, onDelete }) {
+  const [what, setWhat] = useS3(shot.what || "");
+  const [prompt, setPrompt] = useS3(shot.prompt || "");
+  const [st, setSt] = useS3(shot.has_image ? "ready" : "empty");
+  const [v, setV] = useS3(0);
+  React.useEffect(() => { setSt(shot.has_image ? "ready" : "empty"); }, [shot.has_image]);
+  async function gen() {
+    if (window.__bumpCost) window.__bumpCost(8);
+    if (!id) { setSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setSt("ready"); return; }
+    setSt("gen");
+    try {
+      const d = await window.api.propShot(id, "generate", { index: index, n: shot.n, what: what, prompt: prompt });
+      setV((x) => x + 1);
+      setSt(d.ok ? "ready" : "empty");
+      onUpdate && d.props && onUpdate(d.props);
+    } catch (e) { setSt("empty"); }
+  }
+  const imgSrc = id && st === "ready" ? window.api.imageUrl(id, shot.step_key, v) : null;
   return (
     <Panel className="soft" marks={false}>
       <div className="panel-h" style={{ marginBottom: 12 }}>
-        <span className="ttl" style={{ fontSize: 16 }}>Кадр {n}</span>
-        <span className="badge ro">{n} / {total} (макс. 3)</span>
+        <span className="ttl" style={{ fontSize: 16 }}>Кадр {shot.n}</span>
+        <span className="badge ro">{shot.n} / {total} (макс. 3)</span>
         <span className="spacer"></span>
       </div>
       <Field ru="Что это (своими словами)">
-        <input className="in" defaultValue={what} placeholder="например: общий вид меча, клинок целиком" />
+        <input className="in" value={what} onChange={(e) => setWhat(e.target.value)} placeholder="например: общий вид меча, клинок целиком" />
       </Field>
       <Field ru="Описание кадра" en="prompt" hint={<DoDont yes="предмет/эффект, материал, форму, «product shot», чистый фон" no="героя (лицо, тело, руки), сцену, кто держит" />}>
-        <PromptField value={prompt} rows={2} layer="Предмет" />
+        <PromptField value={prompt} onChange={setPrompt} rows={2} layer="Предмет" />
       </Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 140px", gap: 14, alignItems: "start" }}>
         <div className="btnrow">
           <button className="btn sm" onClick={gen}>{st === "ready" ? "↻ Заново" : "Сгенерировать"}</button>
           <button className="btn warn sm" onClick={onDelete}>Удалить кадр</button>
         </div>
-        <div className="pv empty" style={{ minHeight: 96 }}>
-          {st === "gen" ? <div className="pv-spin"></div> : <><Figure kind="item" size={34} />{st === "ready" && <span className="pv-sub" style={{ color: "var(--green)" }}>✓ готово</span>}</>}
+        <div className={"pv " + (st === "ready" ? "ready" : st === "gen" ? "gen" : "empty")} style={{ minHeight: 96 }}>
+          {st === "gen" ? <div className="pv-spin"></div>
+            : imgSrc ? <img src={imgSrc} alt={"кадр " + shot.n} style={{ maxWidth: "100%", maxHeight: 84, borderRadius: 6, objectFit: "contain" }} onError={(e) => { e.target.style.display = "none"; }} />
+              : <><Figure kind="item" size={34} />{st === "ready" && <span className="pv-sub" style={{ color: "var(--green)" }}>✓ готово</span>}</>}
         </div>
       </div>
     </Panel>);
-
 }
 
-function ScreenProps({ ctx }) {
-  // multiple items (from the анкета). Each has its own shots.
-  const ITEMS = [
-    { id: "sword", name: "Меч «Атлантида»", accent: "Меч «Атлантида»",
-      shots: [
-        { id: 1, what: "общий вид меча, клинок целиком", prompt: "ancient bronze longsword, ornate hilt, runic engravings, product shot, plain neutral background", initial: "ready" },
-        { id: 2, what: "крупный план рукояти и руны", prompt: "close-up of the sword hilt, glowing runes, product shot", initial: "empty" }] },
-    { id: "fire", name: "Огненная магия", accent: "Огненная магия",
-      shots: [
-        { id: 1, what: "огненный каст, общий вид", prompt: "burst of magical fire, swirling embers, dramatic lighting, plain dark background, no character", initial: "empty" }] },
-  ];
-  const [activeItem, setActiveItem] = useS3("sword");
-  const item = ITEMS.find((x) => x.id === activeItem) || ITEMS[0];
+/* sample props payload for the static preview (no backend) */
+const SAMPLE_PROPS = {
+  enabled: true,
+  items: [
+    { index: 0, id: "1", name: "Меч «Атлантида»", shots: [
+      { n: 1, what: "общий вид меча, клинок целиком", prompt: "ancient bronze longsword, ornate hilt, runic engravings, product shot, plain neutral background", step_key: "", has_image: false },
+      { n: 2, what: "крупный план рукояти и руны", prompt: "close-up of the sword hilt, glowing runes, product shot", step_key: "", has_image: false }] },
+    { index: 1, id: "2", name: "Огненная магия", shots: [
+      { n: 1, what: "огненный каст, общий вид", prompt: "burst of magical fire, swirling embers, dramatic lighting, plain dark background, no character", step_key: "", has_image: false }] },
+  ],
+};
 
+function ScreenProps({ ctx }) {
+  const id = ctx.activeCharId;
+  const [pr, setPr] = useS3(null);
+  const [activeItem, setActiveItem] = useS3(0);
   const [finish, setFinish] = useS3(null);
-  function doFinish() {
-    const res = window.downloadHeroArchive ? window.downloadHeroArchive(ctx.activeChar) : { approved: 0, rejected: 0 };
-    setFinish(res);
+
+  React.useEffect(() => {
+    if (!id) return;
+    let alive = true;
+    window.api.getProps(id).then((d) => { if (alive && d && d.props) setPr(d.props); }).catch(() => {});
+    return () => { alive = false; };
+  }, [id]);
+
+  const data = pr || SAMPLE_PROPS;
+  const items = data.items;
+
+  async function doFinish() {
+    if (id) {
+      try { await window.api.finishCharacter(id); } catch (e) { /* ignore */ }
+      const a = document.createElement("a");
+      a.href = window.api.archiveUrl(id);
+      a.download = "";
+      document.body.appendChild(a); a.click(); a.remove();
+      setFinish({ real: true });
+    } else {
+      setFinish(window.downloadHeroArchive ? window.downloadHeroArchive(ctx.activeChar) : { approved: 0, rejected: 0 });
+    }
   }
+
   return (
     <div>
       <div className="eyebrow">Шаг 5 из 6 · Предметы · по желанию · финал</div>
@@ -323,16 +353,18 @@ function ScreenProps({ ctx }) {
 
       {/* item tabs */}
       <div className="otabs">
-        {ITEMS.map((it) => (
-          <button key={it.id} className={"otab" + (it.id === activeItem ? " on" : "")} onClick={() => setActiveItem(it.id)}>
-            <span className="otab-nm">{it.name}</span>
-            <span className="badge ro" style={{ fontSize: 9 }}>{it.shots.filter((s) => s.initial === "ready").length}/{it.shots.length} кадр.</span>
+        {items.map((it, i) => (
+          <button key={it.id} className={"otab" + (i === activeItem ? " on" : "")} onClick={() => setActiveItem(i)}>
+            <span className="otab-nm">{it.name || ("предмет " + it.id)}</span>
+            <span className="badge ro" style={{ fontSize: 9 }}>{it.shots.filter((s) => s.has_image).length}/{it.shots.length} кадр.</span>
           </button>
         ))}
         <button className="otab add" title="Предметы добавляются в анкете героя">+ предмет</button>
       </div>
 
-      <PropBuilder key={item.id} item={item} />
+      {items[activeItem]
+        ? <PropBuilder key={items[activeItem].id} id={id} item={items[activeItem]} onUpdate={setPr} />
+        : <Panel><p className="center muted" style={{ padding: 30 }}>Нет предметов — их добавляют в анкете героя.</p></Panel>}
 
       <div className="btnrow split" style={{ marginTop: 12 }}>
         <button className="btn ghost" onClick={() => ctx.go("outfit")}>← Назад</button>
@@ -340,44 +372,43 @@ function ScreenProps({ ctx }) {
       </div>
 
       {finish &&
-      <Dialog onClose={() => setFinish(null)}>
+        <Dialog onClose={() => setFinish(null)}>
           <h3>✓ Готово! Архив скачивается</h3>
           <p>Собрали всё по герою <b>{ctx.activeChar}</b> в один ZIP-архив — он уже загружается в папку
             «Загрузки». Если скачивание не началось, нажмите кнопку ниже.</p>
           <div className="panel soft" style={{ marginBottom: 14 }}>
             <div className="mono" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
-              📦 {ctx.activeChar}_паспорт.zip<br />
+              📦 {ctx.activeChar}_passport.zip<br />
               ├── <b>passport.json</b> <span className="muted">— все промты по слоям</span><br />
-              ├── 📁 approved/ <span className="muted">— {finish.approved} одобренных кадров</span><br />
-              │&nbsp;&nbsp;&nbsp;&nbsp;<span className="muted">01_passport_face_gen2 · 02_passport_body_gen1 …</span><br />
-              └── 📁 rejected/ <span className="muted">— {finish.rejected} в архиве (с номером генерации)</span><br />
-              &nbsp;&nbsp;&nbsp;&nbsp;<span className="muted">rej_01_passport_profile_gen1 …</span>
+              ├── 📁 approved/ <span className="muted">— одобренные кадры (золотой набор)</span><br />
+              └── 📁 rejected/ <span className="muted">— архив отклонённых (с номером попытки)</span>
             </div>
           </div>
           <div className="btnrow split">
             <button className="btn sm" onClick={doFinish}>⬇ Скачать ещё раз</button>
-            <button className="btn primary sm" onClick={() => {setFinish(null);ctx.go("start");}}>На главную →</button>
+            <button className="btn primary sm" onClick={() => { setFinish(null); ctx.go("start"); }}>На главную →</button>
           </div>
-        </Dialog>
-      }
+        </Dialog>}
     </div>);
-
 }
 
 /* builder body for one item (its shots) */
-function PropBuilder({ item }) {
-  const [shots, setShots] = useS3(item.shots);
+function PropBuilder({ id, item, onUpdate }) {
+  async function add() {
+    if (!id) return;
+    try { const d = await window.api.propShot(id, "add", { index: item.index }); onUpdate && d.props && onUpdate(d.props); } catch (e) { /* ignore */ }
+  }
+  async function del(n) {
+    if (!id) return;
+    try { const d = await window.api.propShot(id, "delete", { index: item.index, n: n }); onUpdate && d.props && onUpdate(d.props); } catch (e) { /* ignore */ }
+  }
   return (
     <div>
-      {shots.map((s, i) =>
-      <PropShot key={s.id} n={i + 1} total={shots.length} what={s.what} prompt={s.prompt} initial={s.initial}
-      onDelete={() => setShots(shots.filter((x) => x.id !== s.id))} />
-      )}
-      {shots.length < 3 ?
-      <div className="addrow" style={{ padding: 12, border: "1.5px dashed var(--line-2)", borderRadius: 8, marginBottom: 20 }} onClick={() => setShots([...shots, { id: Date.now(), what: "", prompt: "", initial: "empty" }])}>+ добавить кадр</div> :
-
-      <p className="muted center" style={{ fontSize: 12.5 }}>Достигнут максимум — 3 кадра на предмет.</p>
-      }
+      {item.shots.map((s) =>
+        <PropShot key={s.n} id={id} index={item.index} shot={s} total={item.shots.length} onUpdate={onUpdate} onDelete={() => del(s.n)} />)}
+      {item.shots.length < 3
+        ? <div className="addrow" style={{ padding: 12, border: "1.5px dashed var(--line-2)", borderRadius: 8, marginBottom: 20 }} onClick={add}>+ добавить кадр</div>
+        : <p className="muted center" style={{ fontSize: 12.5 }}>Достигнут максимум — 3 кадра на предмет.</p>}
     </div>);
 }
 

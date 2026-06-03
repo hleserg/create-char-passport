@@ -20,10 +20,12 @@ from create_char_passport.state import (
     CharacterState,
     CostLedger,
     OutfitEntry,
+    PropEntry,
+    PropShot,
     StepRecord,
     blank_state,
 )
-from create_char_passport.storage import save_state
+from create_char_passport.storage import load_state, save_state
 from create_char_passport.wizard import ExtractedCharacter
 
 
@@ -478,3 +480,70 @@ def test_outfit_bad_index_and_scene_and_404(client: TestClient, bucket: Path) ->
         == 400
     )
     assert client.get("/api/character/ghost/outfits").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# props + finish + archive
+# --------------------------------------------------------------------------- #
+def _character_with_prop() -> str:
+    state = blank_state("Молот")
+    state.prompt_layers.style = "ink line"
+    state.props_enabled = True
+    state.props = [PropEntry(id="1", name="меч", shots=[PropShot()])]
+    save_state(state)
+    return state.character_id
+
+
+def test_props_serialise(client: TestClient, bucket: Path) -> None:
+    cid = _character_with_prop()
+    pr = client.get(f"/api/character/{cid}/props").json()["props"]
+    assert pr["enabled"] is True
+    assert pr["items"][0]["name"] == "меч"
+    assert pr["items"][0]["shots"][0]["step_key"] == "prop_1_shot_1"
+
+
+def test_prop_shot_generate_add_delete(
+    client: TestClient, bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _character_with_prop()
+    _stub_emotion_gen(monkeypatch)
+    gen = client.post(
+        f"/api/character/{cid}/props/shot/generate",
+        json={"index": 0, "n": 1, "what": "общий вид", "prompt": "bronze sword, product shot"},
+    ).json()
+    assert gen["ok"] is True
+    assert gen["props"]["items"][0]["shots"][0]["has_image"] is True
+    assert client.get(f"/api/character/{cid}/image/prop_1_shot_1").status_code == 200
+    added = client.post(f"/api/character/{cid}/props/shot/add", json={"index": 0}).json()
+    assert len(added["props"]["items"][0]["shots"]) == 2
+    rem = client.post(f"/api/character/{cid}/props/shot/delete", json={"index": 0, "n": 2}).json()
+    assert len(rem["props"]["items"][0]["shots"]) == 1
+
+
+def test_prop_bad_index_and_404(client: TestClient, bucket: Path) -> None:
+    cid = _character_with_prop()
+    assert client.post(f"/api/character/{cid}/props/shot/add", json={"index": 9}).status_code == 400
+    assert client.get("/api/character/ghost/props").status_code == 404
+
+
+def test_finish_marks_ready(client: TestClient, bucket: Path) -> None:
+    cid = _character_with_prop()
+    res = client.post(f"/api/character/{cid}/finish").json()
+    assert res["ok"] is True
+    # current_step cleared -> the saved-character row reads as "готов" once frames exist
+    loaded = load_state(cid)
+    assert loaded is not None
+    assert loaded.current_step is None
+
+
+def test_archive_download(client: TestClient, bucket: Path) -> None:
+    cid = _character_with_prop()
+    res = client.get(f"/api/character/{cid}/archive")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/zip"
+    assert res.content[:2] == b"PK"  # zip magic
+
+
+def test_finish_and_archive_404(client: TestClient) -> None:
+    assert client.post("/api/character/ghost/finish").status_code == 404
+    assert client.get("/api/character/ghost/archive").status_code == 404
