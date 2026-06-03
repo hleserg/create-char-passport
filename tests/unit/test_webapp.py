@@ -588,6 +588,27 @@ def test_props_enable_toggle(client: TestClient, bucket: Path) -> None:
     assert on["props"]["enabled"] is True
 
 
+def test_props_add(client: TestClient, bucket: Path) -> None:
+    cid = _character_with_prop()
+    before = client.get(f"/api/character/{cid}/props").json()["props"]["items"]
+    after = client.post(f"/api/character/{cid}/props/add").json()["props"]
+    assert after["enabled"] is True
+    assert len(after["items"]) == len(before) + 1
+    assert after["items"][-1]["shots"]  # born with one shot
+
+
+def test_image_thumbnail_falls_back_on_non_image(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _make_character(client, monkeypatch)
+    monkeypatch.setattr("create_char_passport.wizard.passport.generate_image", _fake_gen_ok)
+    client.post(f"/api/character/{cid}/passport/generate", json={"step_key": "passport_face"})
+    # _fake_gen_ok writes non-PNG bytes; a ?w thumbnail must fall back, not 500.
+    assert (
+        client.get(f"/api/character/{cid}/image/passport_face", params={"w": 64}).status_code == 200
+    )
+
+
 def test_prop_bad_index_and_404(client: TestClient, bucket: Path) -> None:
     cid = _character_with_prop()
     assert client.post(f"/api/character/{cid}/props/shot/add", json={"index": 9}).status_code == 400

@@ -341,7 +341,7 @@ function AIButton({ children, onClick, kind = "check", small, busyMs = 1100 }) {
   async function handle(e) {
     if (busy) return;
     setBusy(true);
-    if (window.__bumpCost) window.__bumpCost(2);
+    if (window.__bumpCost) window.__bumpCost(0.003); // ~LLM call, USD
     // Shimmer while the LLM is queried. A wired button returns a Promise from
     // onClick -> the shimmer lasts the *real* round-trip. An un-wired demo
     // button returns nothing -> fall back to a fixed simulated delay.

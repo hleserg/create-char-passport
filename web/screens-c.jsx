@@ -11,7 +11,7 @@ function SceneCard({ id, index, scene, label, fig, req, getGen, onUpdate, regist
   React.useEffect(() => { setSt(scene && scene.has_image ? "ready" : "empty"); }, [scene && scene.has_image]);
 
   async function gen() {
-    if (window.__bumpCost) window.__bumpCost(8);
+    if (window.__bumpCost) window.__bumpCost(0.04);
     if (!id || !scene) { setSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setSt("ready"); return; }
     setSt("gen");
     try {
@@ -242,7 +242,7 @@ function OutfitDetailRow({ id, index, detail, onUpdate, onDelete }) {
   const [v, setV] = useS3(0);
   React.useEffect(() => { setSt(detail.has_image ? "ready" : "empty"); }, [detail.has_image]);
   async function gen() {
-    if (window.__bumpCost) window.__bumpCost(8);
+    if (window.__bumpCost) window.__bumpCost(0.04);
     if (!id) { setSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setSt("ready"); return; }
     setSt("gen");
     try {
@@ -291,7 +291,7 @@ function PropShot({ id, index, shot, total, onUpdate, onDelete }) {
   const [v, setV] = useS3(0);
   React.useEffect(() => { setSt(shot.has_image ? "ready" : "empty"); }, [shot.has_image]);
   async function gen() {
-    if (window.__bumpCost) window.__bumpCost(8);
+    if (window.__bumpCost) window.__bumpCost(0.04);
     if (!id) { setSt("gen"); await new Promise((r) => setTimeout(r, 1000)); setSt("ready"); return; }
     setSt("gen");
     try {
@@ -367,6 +367,13 @@ function ScreenProps({ ctx }) {
     if (!id) { setPr((p) => Object.assign({}, p || SAMPLE_PROPS, { enabled: next })); return; }
     try { const d = await window.api.propsEnable(id, next); if (d.props) setPr(d.props); } catch (e) { /* ignore */ }
   }
+  async function addProp() {
+    if (!id) { setActiveItem(items.length); return; }
+    try {
+      const d = await window.api.propAdd(id);
+      if (d.props) { setPr(d.props); setActiveItem(d.props.items.length - 1); }
+    } catch (e) { /* ignore */ }
+  }
 
   async function doFinish() {
     if (id) {
@@ -412,7 +419,7 @@ function ScreenProps({ ctx }) {
               <span className="badge ro" style={{ fontSize: 9 }}>{it.shots.filter((s) => s.has_image).length}/{it.shots.length} кадр.</span>
             </button>
           ))}
-          <button className="otab add" title="Предметы добавляются в анкете героя">+ предмет</button>
+          <button className="otab add" title="Добавить новый предмет" onClick={addProp}>+ предмет</button>
         </div>
 
         {items[activeItem]
