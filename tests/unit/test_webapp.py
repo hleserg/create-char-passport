@@ -851,6 +851,20 @@ def test_extract_file_fb2_strips_binary_keeps_body(client: TestClient) -> None:
     assert "QUJDREVG" not in text  # embedded base64 image stripped
 
 
+def test_extract_file_fb2_windows1251(client: TestClient) -> None:
+    # Many Russian .fb2 are windows-1251; the server must decode them correctly.
+    fb2 = (
+        '<?xml version="1.0" encoding="windows-1251"?><FictionBook>'
+        "<body><section><p>Граф Орлов вышел из кареты.</p></section></body>"
+        "</FictionBook>"
+    ).encode("cp1251")
+    res = client.post(
+        "/api/extract/file", files={"file": ("кн.fb2", fb2, "application/octet-stream")}
+    )
+    assert res.status_code == 200
+    assert "Граф Орлов вышел из кареты" in res.json()["text"]  # decoded, not mojibake
+
+
 def test_extract_file_large_book_freezes_and_extract_reads_stored(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

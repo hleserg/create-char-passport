@@ -654,7 +654,11 @@ def _build_archive(state: CharacterState) -> Path:
 # large e-books may fail on the hosted Space — the FB2 path strips embedded
 # images client-side first to stay small.
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-_MAX_STORY_CHARS = 600_000
+# Cap the text fed to the character-extraction LLM call: a whole novel can be
+# >1M chars (~250k tokens), and «Найти героев» on that risks a proxy/client
+# timeout. ~300k chars (≈ first third of a long book) reliably contains the main
+# cast while keeping the call fast.
+_MAX_STORY_CHARS = 300_000
 _STORY_FREEZE_CHARS = 8_000
 # Binary / proprietary formats we cannot extract with the stdlib.
 _UNSUPPORTED_EXT = (".mobi", ".azw", ".azw3", ".pdf", ".djvu", ".doc")

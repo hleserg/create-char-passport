@@ -53,6 +53,7 @@ function ScreenStart({ ctx }) {
   const [confirmReset, setConfirmReset] = useS1(false);
   const [fileBusy, setFileBusy] = useS1(false);
   const [book, setBook] = useS1(null); // {name, chars} when a big book is loaded (textarea frozen)
+  const [fileErr, setFileErr] = useS1("");
 
   // Bootstrap from the backend (session + saved characters + project style).
   // Degrades silently to sample data when no backend is present (static preview).
@@ -99,26 +100,46 @@ function ScreenStart({ ctx }) {
     setStyleBusy(false);
   }
 
+  // FB2 is plain XML but is often windows-1251 and embeds a base64 cover that
+  // bloats the file past the Space upload limit. Read the bytes, honour the
+  // declared encoding (Blob.text() would force UTF-8 and mojibake cp1251!),
+  // strip <binary>, and re-emit as small UTF-8 so the upload stays correct + tiny.
+  async function fb2ToUtf8Slim(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let enc = "utf-8";
+    const head = new TextDecoder("iso-8859-1").decode(bytes.slice(0, 256));
+    const m = head.match(/encoding=["']([\w-]+)["']/i);
+    if (m && m[1]) enc = m[1].toLowerCase();
+    let text;
+    try { text = new TextDecoder(enc).decode(bytes); }
+    catch (e) { text = new TextDecoder("utf-8").decode(bytes); }
+    return new File([text.replace(/<binary[\s\S]*?<\/binary>/gi, "")], file.name, { type: "text/xml" });
+  }
+
   // «Загрузить файл»: upload a whole book (fb2/epub/docx/txt/html). The server
   // extracts the text and keeps it; a big book freezes the textarea (we never
-  // dump the text into the form). FB2 embeds a base64 cover that bloats the file
-  // past the Space upload limit, so strip <binary> client-side first (fb2 is XML).
+  // dump the text into the form).
   async function onPickStoryFile(e) {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!file) return;
-    setFileBusy(true);
+    setFileBusy(true); setFileErr("");
     try {
       let upload = file;
       if (/\.fb2$/i.test(file.name)) {
-        const raw = await file.text();
-        upload = new File([raw.replace(/<binary[\s\S]*?<\/binary>/gi, "")], file.name, { type: "text/xml" });
+        try { upload = await fb2ToUtf8Slim(file); } catch (e1) { upload = file; }
       }
       const d = await window.api.extractFile(upload);
       if (d && d.frozen) { setBook({ name: d.name || file.name, chars: d.chars || 0 }); setText(""); }
       else { setText((d && d.text) || ""); setBook(null); }
     } catch (err) {
-      try { setText(await file.text()); setBook(null); } catch (e2) { /* unreadable: ignore */ }
+      // Only plain-text formats are safe to read client-side; never dump binary
+      // (epub/docx) bytes into the textarea.
+      if (/\.(txt|md|text)$/i.test(file.name)) {
+        try { setText(await file.text()); setBook(null); } catch (e2) { setFileErr("Не удалось прочитать файл."); }
+      } else {
+        setFileErr("Не удалось загрузить книгу (возможно, слишком большой файл). Попробуйте fb2 или txt.");
+      }
     }
     setFileBusy(false);
   }
@@ -274,6 +295,7 @@ function ScreenStart({ ctx }) {
           </label>
           <AIButton onClick={findHeroes}>Найти героев в тексте</AIButton>
         </div>
+        {fileErr && <div className="notice red" style={{ marginTop: 10 }}><span className="ic">⚠️</span><span className="tx">{fileErr}</span></div>}
 
         {extracted && (
           <div className="panel soft" style={{ marginTop: 16, marginBottom: 0 }}>
