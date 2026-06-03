@@ -248,22 +248,27 @@ const SAMPLE_TRANSLATIONS = {
 /* dialog: write in Russian -> AI turns it into an optimised EN prompt */
 const TR_LAYER_RU = { face: "Лицо", body: "Тело", outfit: "Одежда", expression: "Эмоция", composition: "Поза / кадр", style: "Стиль" };
 
-function TranslateDialog({ layer = "этот слой", onClose, onInsert }) {
+function TranslateDialog({ layer = "этот слой", current = "", onClose, onInsert }) {
+  const hasCurrent = !!(current && current.trim());
   const [ru, setRu] = useState("");
   const [stage, setStage] = useState("ask");
   const [en, setEn] = useState("");
   const [suggestions, setSuggestions] = useState({});
+  // Edit mode (default when a prompt already exists): the Russian text is a
+  // change request that MODIFIES the current prompt instead of rewriting it.
+  const [edit, setEdit] = useState(hasCurrent);
 
   // Real RU->EN via the backend (Promise -> the AI button shimmers for the
-  // round-trip). Degrades to the sample translation when no backend is present.
+  // round-trip). Degrades to a sensible fallback when no backend is present.
   async function doTranslate() {
-    let text = SAMPLE_TRANSLATIONS[layer] || SAMPLE_TRANSLATIONS["этот слой"] || ru;
+    const cur = edit ? current : "";
+    let text = edit ? current : SAMPLE_TRANSLATIONS[layer] || SAMPLE_TRANSLATIONS["этот слой"] || ru;
     let sugg = {};
     try {
-      const d = await window.api.translate(ru, layer);
+      const d = await window.api.translate(ru, layer, cur);
       if (d.text) text = d.text;
       if (d.suggestions) sugg = d.suggestions;
-    } catch (e) { /* offline: keep the sample */ }
+    } catch (e) { /* offline: keep the fallback */ }
     setEn(text);
     setSuggestions(sugg);
     setStage("res");
@@ -271,22 +276,43 @@ function TranslateDialog({ layer = "этот слой", onClose, onInsert }) {
 
   return (
     <Dialog onClose={onClose}>
-      <h3>⇄ Написать по-русски</h3>
+      <h3>{edit ? "⇄ Правка по-русски" : "⇄ Написать по-русски"}</h3>
       {stage === "ask" ? (
         <>
-          <p>Опишите простыми словами, что хотите в слое <b>«{layer}»</b>. ИИ сам переведёт это
-            на английский и превратит в правильный промт под нейросеть — знать английский не нужно.</p>
-          <Field ru={"Опишите «" + layer + "» по-русски"} hint={<div className="tip"><span className="ic">💡</span><span>Пишите только про этот слой. Например для одежды: «тёмная кожаная туника с меховой оторочкой, широкий пояс, потёртые сапоги».</span></div>}>
-            <textarea className="in" rows={3} value={ru} onChange={(e) => setRu(e.target.value)} placeholder="тёмная кожаная туника с меховой оторочкой, широкий пояс…" />
-          </Field>
-          <div className="btnrow end">
+          {edit ? (
+            <>
+              <p>Напишите по-русски, <b>что изменить</b> в слое <b>«{layer}»</b> — например
+                «сделай нос покрупнее, брови погуще». ИИ <b>дополнит текущий промт</b> под ваш
+                запрос, не переписывая остальное.</p>
+              <Field ru="Текущий промт (что будем править)">
+                <PromptField value={current} rows={2} readOnly />
+              </Field>
+              <Field ru="Что изменить (по-русски)" hint={<div className="tip"><span className="ic">💡</span><span>Только про этот слой. Например: «нос покрупнее, брови погуще, добавь шрам на левой щеке».</span></div>}>
+                <textarea className="in" rows={2} value={ru} onChange={(e) => setRu(e.target.value)} placeholder="сделай нос покрупнее, брови погуще…" />
+              </Field>
+            </>
+          ) : (
+            <>
+              <p>Опишите простыми словами, что хотите в слое <b>«{layer}»</b>. ИИ сам переведёт это
+                на английский и превратит в правильный промт под нейросеть — знать английский не нужно.</p>
+              <Field ru={"Опишите «" + layer + "» по-русски"} hint={<div className="tip"><span className="ic">💡</span><span>Пишите только про этот слой. Например для одежды: «тёмная кожаная туника с меховой оторочкой, широкий пояс, потёртые сапоги».</span></div>}>
+                <textarea className="in" rows={3} value={ru} onChange={(e) => setRu(e.target.value)} placeholder="тёмная кожаная туника с меховой оторочкой, широкий пояс…" />
+              </Field>
+            </>
+          )}
+          {hasCurrent && (
+            <Check on={!edit} onToggle={(v) => setEdit(!v)} label="Переписать заново (не дополнять текущий промт)" />
+          )}
+          <div className="btnrow end" style={{ marginTop: 12 }}>
             <button className="btn ghost" onClick={onClose}>Отмена</button>
-            <AIButton onClick={doTranslate}>Превратить в промт</AIButton>
+            <AIButton onClick={doTranslate}>{edit ? "Применить правку" : "Превратить в промт"}</AIButton>
           </div>
         </>
       ) : (
         <>
-          <p>Готово. Вот английский промт под нейросеть. Можно вставить в поле как есть или сначала подправить.</p>
+          <p>{edit
+            ? "Готово. Вот обновлённый промт — текущий с применённой правкой. Можно вставить как есть или ещё подправить."
+            : "Готово. Вот английский промт под нейросеть. Можно вставить в поле как есть или сначала подправить."}</p>
           <Field ru="Промт для нейросети" en="">
             <PromptField value={en} onChange={setEn} rows={3} />
           </Field>
@@ -337,7 +363,7 @@ function PromptField({ value, onChange, placeholder, readOnly, rows = 2, layer }
         rows={rows}
         onChange={(e) => set(e.target.value)}
       />
-      {tr && <TranslateDialog layer={layer || "этот слой"} onClose={() => setTr(false)} onInsert={(en) => set(en)} />}
+      {tr && <TranslateDialog layer={layer || "этот слой"} current={text} onClose={() => setTr(false)} onInsert={(en) => set(en)} />}
     </div>
   );
 }

@@ -145,7 +145,7 @@ def test_generate_image_handles_429_rate_limit(
     result = generate_image(prompt_layers={"style": "x"}, refs=[], output_path=tmp_path / "out.png")
     assert result.ok is False
     assert result.image_path is None
-    assert "квота" in (result.error or "").lower()
+    assert "лимит" in (result.error or "").lower()
 
 
 def test_generate_image_handles_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

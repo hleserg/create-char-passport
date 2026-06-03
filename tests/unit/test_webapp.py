@@ -129,19 +129,21 @@ def test_extract_returns_drafts_and_bills_session(
 def test_translate_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     from create_char_passport.wizard import Translation
 
-    monkeypatch.setattr(
-        webapp,
-        "translate_layer",
-        lambda text, layer, meter=None: Translation(
-            text="dark leather tunic", suggestions={"body": "stocky"}
-        ),
-    )
+    seen: dict[str, str] = {}
+
+    def fake_translate(text, layer, *, current="", meter=None):
+        seen["current"] = current
+        return Translation(text="dark leather tunic", suggestions={"body": "stocky"})
+
+    monkeypatch.setattr(webapp, "translate_layer", fake_translate)
     res = client.post(
-        "/api/translate", json={"text": "тёмная кожаная туника", "layer": "Одежда"}
+        "/api/translate",
+        json={"text": "сделай нос покрупнее", "layer": "Одежда", "current": "broad nose"},
     ).json()
     assert res["text"] == "dark leather tunic"
     assert res["suggestions"] == {"body": "stocky"}
     assert "total_usd" in res["cost"]
+    assert seen["current"] == "broad nose"  # edit-mode current forwarded to the translator
 
 
 def test_extract_empty_text_is_noop(client: TestClient) -> None:
