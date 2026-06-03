@@ -246,10 +246,29 @@ const SAMPLE_TRANSLATIONS = {
 };
 
 /* dialog: write in Russian -> AI turns it into an optimised EN prompt */
+const TR_LAYER_RU = { face: "Лицо", body: "Тело", outfit: "Одежда", expression: "Эмоция", composition: "Поза / кадр", style: "Стиль" };
+
 function TranslateDialog({ layer = "этот слой", onClose, onInsert }) {
   const [ru, setRu] = useState("");
   const [stage, setStage] = useState("ask");
-  const en = SAMPLE_TRANSLATIONS[layer] || SAMPLE_TRANSLATIONS["этот слой"];
+  const [en, setEn] = useState("");
+  const [suggestions, setSuggestions] = useState({});
+
+  // Real RU->EN via the backend (Promise -> the AI button shimmers for the
+  // round-trip). Degrades to the sample translation when no backend is present.
+  async function doTranslate() {
+    let text = SAMPLE_TRANSLATIONS[layer] || SAMPLE_TRANSLATIONS["этот слой"] || ru;
+    let sugg = {};
+    try {
+      const d = await window.api.translate(ru, layer);
+      if (d.text) text = d.text;
+      if (d.suggestions) sugg = d.suggestions;
+    } catch (e) { /* offline: keep the sample */ }
+    setEn(text);
+    setSuggestions(sugg);
+    setStage("res");
+  }
+
   return (
     <Dialog onClose={onClose}>
       <h3>⇄ Написать по-русски</h3>
@@ -262,16 +281,26 @@ function TranslateDialog({ layer = "этот слой", onClose, onInsert }) {
           </Field>
           <div className="btnrow end">
             <button className="btn ghost" onClick={onClose}>Отмена</button>
-            <AIButton onClick={() => setStage("res")}>Превратить в промт</AIButton>
+            <AIButton onClick={doTranslate}>Превратить в промт</AIButton>
           </div>
         </>
       ) : (
         <>
-          <p>Готово. Вот промт для нейросети — <b>оптимизирован под Nano Banana</b>. Можно вставить
-            в поле как есть или сначала подправить.</p>
+          <p>Готово. Вот английский промт под нейросеть. Можно вставить в поле как есть или сначала подправить.</p>
           <Field ru="Промт для нейросети" en="">
-            <PromptField value={en} rows={3} />
+            <PromptField value={en} onChange={setEn} rows={3} />
           </Field>
+          {Object.keys(suggestions).length > 0 && (
+            <div className="panel soft" style={{ marginBottom: 12, background: "var(--blue-tint)", borderColor: "var(--blue)" }}>
+              <div className="field-lbl"><span className="ru">Похоже, вы описали и другие слои</span></div>
+              <p className="muted" style={{ fontSize: 12.5, margin: "0 0 8px" }}>Это не для слоя «{layer}». Впишите в соответствующие поля (там тоже есть кнопка <b>⇄</b>):</p>
+              {Object.keys(suggestions).map((k) => (
+                <div key={k} className="mono" style={{ fontSize: 12, marginBottom: 4, color: "var(--ink-2)" }}>
+                  <b style={{ color: "var(--blue-deep)" }}>{TR_LAYER_RU[k] || k}:</b> {suggestions[k]}
+                </div>
+              ))}
+            </div>
+          )}
           <div className="btnrow split">
             <button className="btn ghost" onClick={() => setStage("ask")}>← Изменить русский</button>
             <button className="btn primary" onClick={() => { onInsert && onInsert(en); onClose(); }}>Вставить в поле</button>
@@ -285,11 +314,21 @@ function TranslateDialog({ layer = "этот слой", onClose, onInsert }) {
 /* prompt textarea — english, mono, with EN badge + RU->EN translate button */
 function PromptField({ value, onChange, placeholder, readOnly, rows = 2, layer }) {
   const [text, setText] = useState(value || "");
+  const [tr, setTr] = useState(false);
   useEffect(() => { setText(value || ""); }, [value]);
   function set(v) { setText(v); onChange && onChange(v); }
+  const canTranslate = !readOnly && onChange;
   return (
     <div className="promptwrap">
       <span className="lang">EN · англ.</span>
+      {canTranslate && (
+        <button
+          type="button"
+          onClick={() => setTr(true)}
+          title="Описать по-русски — ИИ переведёт в английский промт"
+          style={{ position: "absolute", top: 5, right: 5, zIndex: 2, fontSize: 11, fontWeight: 600, color: "var(--blue-deep)", background: "var(--blue-tint)", border: "1px solid var(--blue)", borderRadius: 6, padding: "2px 7px", cursor: "pointer" }}
+        >⇄ по-русски</button>
+      )}
       <textarea
         className={"in mono" + (readOnly ? " ro" : "")}
         value={text}
@@ -298,6 +337,7 @@ function PromptField({ value, onChange, placeholder, readOnly, rows = 2, layer }
         rows={rows}
         onChange={(e) => set(e.target.value)}
       />
+      {tr && <TranslateDialog layer={layer || "этот слой"} onClose={() => setTr(false)} onInsert={(en) => set(en)} />}
     </div>
   );
 }

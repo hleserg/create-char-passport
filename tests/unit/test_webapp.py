@@ -126,6 +126,24 @@ def test_extract_returns_drafts_and_bills_session(
     assert body["cost"]["total_usd"] == 0.01
 
 
+def test_translate_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from create_char_passport.wizard import Translation
+
+    monkeypatch.setattr(
+        webapp,
+        "translate_layer",
+        lambda text, layer, meter=None: Translation(
+            text="dark leather tunic", suggestions={"body": "stocky"}
+        ),
+    )
+    res = client.post(
+        "/api/translate", json={"text": "тёмная кожаная туника", "layer": "Одежда"}
+    ).json()
+    assert res["text"] == "dark leather tunic"
+    assert res["suggestions"] == {"body": "stocky"}
+    assert "total_usd" in res["cost"]
+
+
 def test_extract_empty_text_is_noop(client: TestClient) -> None:
     # No monkeypatch: real extract_characters short-circuits on blank text (no call).
     body = client.post("/api/extract", json={"text": "   "}).json()
