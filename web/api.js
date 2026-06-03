@@ -81,9 +81,18 @@
         body: JSON.stringify({ text: text, layer: layer, current: current || "" }),
       });
     },
-    /* pick an extracted draft -> create + persist the character ({character}) */
-    createCharacter(name) {
-      return jsonFetch("/api/character", { method: "POST", body: JSON.stringify({ name: name }) });
+    /* pick an extracted draft -> create + persist the character ({character}).
+       Sends the WHOLE draft (table/face/body/outfit) so creation does not depend
+       on the server session (a cross-site iframe may drop the session cookie).
+       Accepts a draft object or a bare name (back-compat). */
+    createCharacter(draft) {
+      const d = typeof draft === "string" ? { name: draft } : draft || {};
+      return jsonFetch("/api/character", {
+        method: "POST",
+        body: JSON.stringify({
+          name: d.name, table: d.table || {}, face: d.face || "", body: d.body || "", outfit: d.outfit || "",
+        }),
+      });
     },
     /* load a character (resume / open saved) -> ({character}) */
     getCharacter(id) {

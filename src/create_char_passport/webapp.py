@@ -108,7 +108,7 @@ from create_char_passport.wizard.emotions import (
     missing_emotion_refs,
 )
 from create_char_passport.wizard.export import golden_image_files
-from create_char_passport.wizard.extraction import extract_characters
+from create_char_passport.wizard.extraction import ExtractedCharacter, extract_characters
 from create_char_passport.wizard.outfits import (
     add_outfit_detail,
     all_outfits_approved,
@@ -182,9 +182,20 @@ class ExtractRequest(BaseModel):
 
 
 class CreateRequest(BaseModel):
-    """Body of ``POST /api/character`` — the picked extracted character's name."""
+    """Body of ``POST /api/character`` — the picked extracted character.
+
+    The SPA sends the whole draft (``table``/``face``/``body``/``outfit``) so the
+    character is built WITHOUT reading the server session — a cross-site iframe
+    (huggingface.co embed) may drop the session cookie, which previously made
+    this 404 and broke every new character. ``name`` alone still works via the
+    session draft lookup (back-compat) when the draft fields are absent.
+    """
 
     name: str = ""
+    table: dict[str, str] | None = None
+    face: str | None = None
+    body: str | None = None
+    outfit: str | None = None
 
 
 class TranslateRequest(BaseModel):
@@ -1059,14 +1070,28 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
     def create_character(
         body: CreateRequest, request: Request, response: Response
     ) -> dict[str, Any]:
-        """Create + persist a character from a picked extraction draft."""
+        """Create + persist a character from a picked extraction draft.
+
+        Builds from the draft the SPA posts (session-independent — survives a
+        dropped iframe cookie). Falls back to the session draft lookup by name
+        when the SPA sent only a name (back-compat).
+        """
         sess = _get_session(request, response)
-        draft = next(
-            (ec for ec in sess.extracted_characters if getattr(ec, "name", None) == body.name),
-            None,
-        )
-        if draft is None:
-            raise HTTPException(status_code=404, detail="character draft not found")
+        if body.table is not None or body.face is not None or body.body is not None:
+            draft = ExtractedCharacter(
+                name=body.name,
+                table=body.table or {},
+                face=body.face or "",
+                body=body.body or "",
+                outfit=body.outfit or "",
+            )
+        else:
+            draft = next(
+                (ec for ec in sess.extracted_characters if getattr(ec, "name", None) == body.name),
+                None,
+            )
+            if draft is None:
+                raise HTTPException(status_code=404, detail="character draft not found")
         state = character_from_extracted(draft, style_prompt=sess.style_prompt)
         # Guard against id collision: two distinct names can slug to the same id
         # (e.g. a second "Иван" -> "ivan", or two same-named drafts in one

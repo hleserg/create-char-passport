@@ -150,19 +150,20 @@ function ScreenStart({ ctx }) {
   async function findHeroes() {
     try {
       const data = await window.api.extract(text, !!book);
-      setFound((data.characters || []).map((c) => c.name));
+      setFound(data.characters || []); // keep the FULL drafts (table/face/body/outfit)
     } catch (e) {
-      setFound(["Герон", "Тайра", "Луций"]);
+      setFound([{ name: "Герон" }, { name: "Тайра" }, { name: "Луций" }]);
     }
     setExtracted(true);
   }
 
-  // Pick a found hero -> create + persist the character server-side, then open
-  // the anketa on its real id (degrades to name-only navigation with no backend).
-  async function pickHero(name) {
-    ctx.setActiveChar(name);
+  // Pick a found hero -> create + persist the character (the whole draft is sent,
+  // so creation does not depend on the server session) then open the anketa on
+  // its real id (degrades to name-only navigation with no backend).
+  async function pickHero(draft) {
+    ctx.setActiveChar(draft.name);
     try {
-      const data = await window.api.createCharacter(name);
+      const data = await window.api.createCharacter(draft);
       ctx.setActiveCharId(data && data.character ? data.character.id : null);
     } catch (e) {
       ctx.setActiveCharId(null);
@@ -301,10 +302,10 @@ function ScreenStart({ ctx }) {
           <div className="panel soft" style={{ marginTop: 16, marginBottom: 0 }}>
             <div className="field-lbl"><span className="ru">Нашли героев</span></div>
             <div className="btnrow">
-              {found.map((n) => (
-                <button className="btn sm" key={n} onClick={() => pickHero(n)}>
-                  <span className="av" style={{ width: 22, height: 22, borderRadius: 99, background: "var(--blue)", color: "#fff", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>{n[0]}</span>
-                  {n} →
+              {found.map((d) => (
+                <button className="btn sm" key={d.name} onClick={() => pickHero(d)}>
+                  <span className="av" style={{ width: 22, height: 22, borderRadius: 99, background: "var(--blue)", color: "#fff", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>{d.name[0]}</span>
+                  {d.name} →
                 </button>
               ))}
             </div>

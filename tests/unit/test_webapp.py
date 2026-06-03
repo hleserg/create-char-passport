@@ -252,6 +252,28 @@ def test_create_character_persists_and_serialises(
     assert client.get("/api/character/geron").status_code == 200  # persisted
 
 
+def test_create_character_from_posted_draft_without_session(
+    client: TestClient, bucket: Path
+) -> None:
+    # No prior /api/extract — the SPA posts the whole draft, so creation must not
+    # depend on the server session (the cross-site-iframe dropped-cookie case).
+    res = client.post(
+        "/api/character",
+        json={
+            "name": "Тайра",
+            "table": {"gender": "female", "age": "25"},
+            "face": "sharp features",
+            "body": "lithe",
+            "outfit": "leather armor",
+        },
+    )
+    assert res.status_code == 200
+    char = res.json()["character"]
+    assert char["id"] == "tayra"
+    assert char["card"]["gender"] == "female"
+    assert client.get("/api/character/tayra").status_code == 200  # persisted
+
+
 def test_create_character_id_collision_does_not_overwrite(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
