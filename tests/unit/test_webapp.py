@@ -16,7 +16,13 @@ from fastapi.testclient import TestClient
 from create_char_passport import webapp
 from create_char_passport.config import get_settings
 from create_char_passport.gen import GenerationResult
-from create_char_passport.state import CharacterState, CostLedger, StepRecord, blank_state
+from create_char_passport.state import (
+    CharacterState,
+    CostLedger,
+    OutfitEntry,
+    StepRecord,
+    blank_state,
+)
 from create_char_passport.storage import save_state
 from create_char_passport.wizard import ExtractedCharacter
 
@@ -370,3 +376,105 @@ def test_emotions_generate_bad_index_400(
 
 def test_emotions_not_found_404(client: TestClient) -> None:
     assert client.get("/api/character/ghost/emotions").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# outfits: serialize / scene generate / complex / approve / details
+# --------------------------------------------------------------------------- #
+def _character_with_outfit(complex_: bool = False) -> str:
+    state = blank_state("Аякс")
+    state.prompt_layers.face = "scarred face"
+    state.prompt_layers.body = "huge, muscular"
+    state.outfits_enabled = True
+    state.outfits = [OutfitEntry(id="1", prompt="plate armour", complex=complex_)]
+    save_state(state)
+    return state.character_id
+
+
+def test_outfits_serialise(client: TestClient, bucket: Path) -> None:
+    cid = _character_with_outfit()
+    out = client.get(f"/api/character/{cid}/outfits").json()["outfits"]
+    assert out["enabled"] is True
+    assert out["outfits"][0]["name"] == "plate armour"
+    assert [s["scene"] for s in out["outfits"][0]["scenes"]] == ["front_full", "back_full"]
+    assert out["outfits"][0]["required_present"] is False
+
+
+def test_outfit_generate_scene_and_image(
+    client: TestClient, bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _character_with_outfit()
+    _stub_emotion_gen(monkeypatch)  # patches wizard.generation.generate_image
+    res = client.post(
+        f"/api/character/{cid}/outfits/generate",
+        json={"index": 0, "scene": "front_full", "prompt": "gilded plate armour"},
+    ).json()
+    assert res["ok"] is True
+    front = res["outfits"]["outfits"][0]["scenes"][0]
+    assert front["has_image"] is True
+    assert res["outfits"]["outfits"][0]["name"] == "gilded plate armour"
+    assert client.get(f"/api/character/{cid}/image/{front['step_key']}").status_code == 200
+
+
+def test_outfit_complex_adds_profile(client: TestClient, bucket: Path) -> None:
+    cid = _character_with_outfit()
+    res = client.post(
+        f"/api/character/{cid}/outfits/complex", json={"index": 0, "complex": True}
+    ).json()
+    assert [s["scene"] for s in res["outfits"]["outfits"][0]["scenes"]] == [
+        "front_full",
+        "back_full",
+        "profile_full",
+    ]
+
+
+def test_outfit_approve_requires_front_and_back(
+    client: TestClient, bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _character_with_outfit()
+    assert (
+        client.post(f"/api/character/{cid}/outfits/approve", json={"index": 0}).status_code == 400
+    )
+    _stub_emotion_gen(monkeypatch)
+    for scene in ("front_full", "back_full"):
+        client.post(f"/api/character/{cid}/outfits/generate", json={"index": 0, "scene": scene})
+    res = client.post(f"/api/character/{cid}/outfits/approve", json={"index": 0})
+    assert res.status_code == 200
+    assert res.json()["outfits"]["outfits"][0]["required_present"] is True
+
+
+def test_outfit_detail_add_generate_delete(
+    client: TestClient, bucket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cid = _character_with_outfit(complex_=True)
+    _stub_emotion_gen(monkeypatch)
+    client.post(f"/api/character/{cid}/outfits/generate", json={"index": 0, "scene": "front_full"})
+    add = client.post(f"/api/character/{cid}/outfits/detail/add", json={"index": 0}).json()
+    assert len(add["outfits"]["outfits"][0]["details"]) == 1
+    gen = client.post(
+        f"/api/character/{cid}/outfits/detail/generate",
+        json={"index": 0, "n": 1, "prompt": "engraved pauldron"},
+    ).json()
+    assert gen["ok"] is True
+    assert gen["outfits"]["outfits"][0]["details"][0]["has_image"] is True
+    rem = client.post(
+        f"/api/character/{cid}/outfits/detail/delete", json={"index": 0, "n": 1}
+    ).json()
+    assert rem["outfits"]["outfits"][0]["details"] == []
+
+
+def test_outfit_bad_index_and_scene_and_404(client: TestClient, bucket: Path) -> None:
+    cid = _character_with_outfit()
+    assert (
+        client.post(
+            f"/api/character/{cid}/outfits/generate", json={"index": 9, "scene": "front_full"}
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            f"/api/character/{cid}/outfits/generate", json={"index": 0, "scene": "sideways"}
+        ).status_code
+        == 400
+    )
+    assert client.get("/api/character/ghost/outfits").status_code == 404
