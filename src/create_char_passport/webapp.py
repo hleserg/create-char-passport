@@ -204,6 +204,12 @@ class ArchivedRequest(BaseModel):
     archived: bool = True
 
 
+class NameRequest(BaseModel):
+    """Body of ``PUT /api/character/{id}/name`` — the new display name."""
+
+    name: str = ""
+
+
 class TranslateRequest(BaseModel):
     """Body of ``POST /api/translate`` — Russian text + the target layer label.
 
@@ -1144,6 +1150,25 @@ def create_app(web_dir: Path | None = None) -> FastAPI:
         if sess.character is not None and sess.character.character_id == character_id:
             sess.character.archived = state.archived
         return {"id": character_id, "archived": state.archived}
+
+    @app.put("/api/character/{character_id}/name")
+    def rename_character(
+        character_id: str, body: NameRequest, request: Request, response: Response
+    ) -> dict[str, Any]:
+        """Rename a character's display name. The character_id (bucket folder) is
+        kept stable on purpose — only the shown name + LoRA trigger change."""
+        sess = _get_session(request, response)
+        new_name = (body.name or "").strip()
+        if not new_name:
+            raise HTTPException(status_code=422, detail="имя героя обязательно")
+        state = load_state(character_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="character not found")
+        state.name = new_name
+        save_state(state)
+        if sess.character is not None and sess.character.character_id == character_id:
+            sess.character.name = new_name
+        return {"id": character_id, "name": new_name}
 
     @app.put("/api/character/{character_id}/anketa")
     def save_anketa(

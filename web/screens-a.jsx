@@ -56,9 +56,21 @@ function ScreenStart({ ctx }) {
   const [fileErr, setFileErr] = useS1("");
   const [name, setName] = useS1(""); // create-by-name (primary path)
   const [showArchive, setShowArchive] = useS1(false);
+  const [renaming, setRenaming] = useS1(null); // {id, name} being renamed, or null
+  const [renameValue, setRenameValue] = useS1("");
 
   function setRowArchived(id, archived) {
     setSaved((rows) => rows.map((r) => (r.id === id ? { ...r, archived } : r)));
+  }
+  function openRename(c) { setRenaming(c); setRenameValue(c.name); }
+  async function doRename() {
+    const c = renaming, nm = renameValue.trim();
+    if (!c || !nm) { setRenaming(null); return; }
+    setSaved((rows) => rows.map((r) => (r.id === c.id ? { ...r, name: nm } : r))); // optimistic
+    if (ctx.activeCharId === c.id) ctx.setActiveChar(nm);
+    setRenaming(null);
+    try { await window.api.renameCharacter(c.id, nm); }
+    catch (e) { setSaved((rows) => rows.map((r) => (r.id === c.id ? { ...r, name: c.name } : r))); }
   }
   async function archiveChar(c) {
     setRowArchived(c.id, true); // optimistic
@@ -392,6 +404,7 @@ function ScreenStart({ ctx }) {
                   {c.status === "готов" && (
                     <button className="btn ghost sm" title="Скачать ZIP-архив героя (кадры + промты)" onClick={() => { window.location.href = window.api.archiveUrl(c.id); }}>⬇ Скачать</button>
                   )}
+                  <button className="btn ghost sm" title="Переименовать героя" onClick={() => openRename(c)}>✎</button>
                   <button className="btn ghost sm" onClick={() => open(c)}>Открыть →</button>
                   {isArch
                     ? <button className="btn ghost sm" title="Вернуть из архива" onClick={() => restoreChar(c)}>↩ вернуть</button>
@@ -436,6 +449,22 @@ function ScreenStart({ ctx }) {
           <div className="btnrow end">
             <button className="btn ghost" onClick={() => setConfirmReset(false)}>Отмена</button>
             <button className="btn warn" onClick={resetStyle}>Да, изменить стиль</button>
+          </div>
+        </Dialog>
+      )}
+
+      {renaming && (
+        <Dialog onClose={() => setRenaming(null)}>
+          <h3>✎ Переименовать героя</h3>
+          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>Меняется только отображаемое имя. Уже сгенерированные кадры и папка героя не трогаются.</p>
+          <Field ru="Новое имя">
+            <input className="in" autoFocus value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") doRename(); }} />
+          </Field>
+          <div className="btnrow end">
+            <button className="btn ghost" onClick={() => setRenaming(null)}>Отмена</button>
+            <button className="btn primary" disabled={!renameValue.trim()} onClick={doRename}>Сохранить</button>
           </div>
         </Dialog>
       )}
