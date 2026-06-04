@@ -105,6 +105,13 @@
         body: JSON.stringify({ archived: !!archived }),
       });
     },
+    /* rename a character's display name (the bucket id stays stable) */
+    renameCharacter(id, name) {
+      return jsonFetch("/api/character/" + encodeURIComponent(id) + "/name", {
+        method: "PUT",
+        body: JSON.stringify({ name: name }),
+      });
+    },
     /* LLM-compose FACE/BODY/OUTFIT/base-emotion drafts from the trait card */
     composeLayers(id, card, marks) {
       return jsonFetch("/api/character/" + encodeURIComponent(id) + "/compose", {

@@ -288,6 +288,22 @@ def test_archive_unknown_character_404(client: TestClient, bucket: Path) -> None
     assert client.put("/api/character/ghost/archived", json={"archived": True}).status_code == 404
 
 
+def test_rename_character_keeps_id(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    cid = _make_character(client, monkeypatch)  # "geron"
+    r = client.put(f"/api/character/{cid}/name", json={"name": "Герон Старший"})
+    assert r.status_code == 200 and r.json() == {"id": cid, "name": "Герон Старший"}
+    # name changed, id (folder) stable + persisted
+    state = load_state(cid)
+    assert state is not None and state.name == "Герон Старший" and state.character_id == cid
+    assert client.get(f"/api/character/{cid}").json()["character"]["name"] == "Герон Старший"
+
+
+def test_rename_character_empty_422_and_unknown_404(client: TestClient, bucket: Path) -> None:
+    assert client.put("/api/character/ghost/name", json={"name": "X"}).status_code == 404
+    cid = client.post("/api/character", json={"name": "Лют", "table": {}}).json()["character"]["id"]
+    assert client.put(f"/api/character/{cid}/name", json={"name": "  "}).status_code == 422
+
+
 def test_create_character_from_posted_draft_without_session(
     client: TestClient, bucket: Path
 ) -> None:
